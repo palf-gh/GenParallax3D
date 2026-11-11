@@ -287,6 +287,12 @@ class PropertiesPanel(QWidget):
         self.distance.valueChanged.connect(self._on_distance)
         self.strength = SliderSpin(-5000, 5000, 1, 5)
         self.strength.valueChanged.connect(lambda v: self._emit("depth_strength", self._to_internal(v)))
+        self.simplify = QComboBox()
+        for level, label in (("off", "Off"), ("standard", "Standard"), ("strong", "Strong")):
+            self.simplify.addItem(tr(label), level)
+        self.simplify.setToolTip(tr("Fewer vertices: large triangles where the surface is flat or smooth. "
+                                    "The outline and the camera view stay the same; Strong allows more depth error"))
+        self.simplify.currentIndexChanged.connect(lambda: self._emit("mesh_simplify", self.simplify.currentData()))
         self.conform = QCheckBox(tr("Lay onto layers below (overlay)"))
         self.conform.setToolTip(tr("For light rays, haze, scattered petals…: take depth from the layers underneath "
                                    "instead of the depth map, which only shows what is behind a translucent layer"))
@@ -296,6 +302,7 @@ class PropertiesPanel(QWidget):
         form.addRow(tr("Reconstruction Mode"), self.mode_combo)
         form.addRow(tr("Z Position (px)"), self.z_position)
         form.addRow(tr("Depth Strength (px)"), self.strength)
+        form.addRow(tr("Mesh Simplification"), self.simplify)
         form.addRow(self.conform)
 
         # --- unit properties (advanced) ----------------------------------
@@ -583,7 +590,8 @@ class PropertiesPanel(QWidget):
         self.density.setValue(u.mesh_density)
         self.adaptive.setChecked(u.adaptive_mesh)
         self.detail.setValue(u.mesh_detail)
-        self.detail.setEnabled(u.adaptive_mesh)
+        self.simplify.setCurrentIndex(max(0, self.simplify.findData(u.mesh_simplify)))
+        self.detail.setEnabled(u.adaptive_mesh and u.mesh_simplify == "off")  # simplification has its own test
         self.edge_inset.setValue(u.edge_inset)
         self.occlusion_inset.setValue(u.occlusion_inset)
         self.conform.setChecked(u.conform)

@@ -735,8 +735,8 @@ class MainWindow(QMainWindow):
             if relief:
                 unitlib.refresh_relief(self.scene, unit)
             update_unit_mesh(unit, self.scene.reference_camera)
-        if attr in ("mode", "mesh_density", "adaptive_mesh", "mesh_detail", "edge_inset", "occlusion_inset",
-                    "conform", "depth_offset"):
+        if attr in ("mode", "mesh_density", "adaptive_mesh", "mesh_detail", "mesh_simplify", "edge_inset",
+                    "occlusion_inset", "conform", "depth_offset"):
             self.props.set_units(self.scene, ids)
         self.viewport.update()
         # Throttle rather than debounce: while a slider is dragged the pass still runs

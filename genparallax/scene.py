@@ -217,6 +217,9 @@ class ReconstructionUnit:
     mesh_density: int = 4  # grid step in pixels (minimum cell size when adaptive)
     adaptive_mesh: bool = True  # quadtree cells, refined at silhouettes and where the relief varies
     mesh_detail: float = 0.03  # adaptive refinement tolerance, in units of the relief R
+    #: Mesh simplification level ("off", "standard", "strong"): large triangles wherever
+    #: the surface is close to planar (see ``meshing.SIMPLIFY_DEPTH_RATIO``).
+    mesh_simplify: str = "standard"
     edge_inset: int = 2  # px; depth near the silhouette is taken from this far inside
     #: px; depth this close to an opaque layer above is not trusted (see ``trusted_pixels``)
     occlusion_inset: int = 6
