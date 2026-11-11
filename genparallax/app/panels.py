@@ -11,10 +11,14 @@ from PySide6.QtWidgets import (
 
 from genparallax.app.i18n import tr, tr_message
 from genparallax.document.psd_loader import PsdDocument
-from genparallax.scene import CAMERA_PRESETS_MM, FILM_MEASURES, PX_TO_MM, ReconstructionMode, Scene
+from genparallax.scene import CAMERA_PRESETS_MM, FILM_MEASURES, MODEL_UNITS, PX_TO_MM, ReconstructionMode, Scene
 
 KEY_ROLE = Qt.ItemDataRole.UserRole
 MEASURE_LABELS = {"horizontal": "Horizontal", "vertical": "Vertical", "diagonal": "Diagonal"}
+
+#: Names as in After Effects' Model Units menu.
+MODEL_UNIT_LABELS = {"mm": "mm", "cm": "Centimetres", "m": "Metres", "km": "Kilometres",
+                     "in": "Inches", "ft": "Feet", "yd": "Yards", "mi": "Miles"}
 
 
 class LayerPanel(QWidget):
@@ -228,7 +232,7 @@ class PropertiesPanel(QWidget):
     renameRequested = Signal(str, str)
     compositionChanged = Signal()
     parallaxChanged = Signal(float, float)  # amplitude fraction, period seconds
-    exportScaleChanged = Signal(float)
+    modelUnitChanged = Signal(str)  # After Effects Model Units the GLB is written for
     depthRangeChanged = Signal(float)  # far / near ratio
 
     def __init__(self, parent=None):
@@ -285,7 +289,8 @@ class PropertiesPanel(QWidget):
         dform.setContentsMargins(0, 0, 0, 0)
         self.offset = SliderSpin(-5000, 5000, 1, 5)
         self.offset.valueChanged.connect(lambda v: self._emit("depth_offset", self._to_internal(v)))
-        self.smoothing = SliderSpin(0, 50, 1, 0.5)
+        self.smoothing = SliderSpin(0, 200, 1, 1.0)
+        self.smoothing.setToolTip(tr("Gaussian σ in image pixels; large values smooth thin lattice layers such as towers"))
         self._smooth_timer = QTimer(self, singleShot=True, interval=200)
         self._smooth_timer.timeout.connect(lambda: self._emit("depth_smoothing", self.smoothing.value(), True))
         self.smoothing.valueChanged.connect(lambda _v: self._smooth_timer.start())
@@ -452,11 +457,14 @@ class PropertiesPanel(QWidget):
         self.period.setSuffix(" s")
         for w in (self.amplitude, self.period):
             w.valueChanged.connect(lambda _v: self.parallaxChanged.emit(self.amplitude.value(), self.period.value()))
-        self.export_scale = QDoubleSpinBox()
-        self.export_scale.setDecimals(5)
-        self.export_scale.setRange(0.00001, 100.0)
-        self.export_scale.setValue(0.01)
-        self.export_scale.valueChanged.connect(self.exportScaleChanged)
+        self.model_unit = QComboBox()
+        for value in MODEL_UNITS:
+            self.model_unit.addItem(tr(MODEL_UNIT_LABELS[value]), value)
+        self.model_unit.setCurrentIndex(list(MODEL_UNITS).index("m"))
+        self.model_unit.setToolTip(tr("Pick the same Model Units in After Effects' Model Settings and keep Object "
+                                      "Scale at 100 %: one composition pixel is then one pixel in After Effects"))
+        self.model_unit.currentIndexChanged.connect(
+            lambda _i: None if self._loading else self.modelUnitChanged.emit(self.model_unit.currentData()))
         cam_form.addRow(tr("Angle of View (°)"), self.angle)
         cam_form.addRow(tr("Zoom"), self.zoom)
         cam_form.addRow(tr("Film Size (mm)"), self.film_size)
@@ -466,7 +474,7 @@ class PropertiesPanel(QWidget):
         cam_form.addRow(tr("Scene Depth Range"), self.depth_range)
         cam_form.addRow(tr("Parallax Amplitude (× width)"), self.amplitude)
         cam_form.addRow(tr("Parallax Period"), self.period)
-        cam_form.addRow(tr("Export Units per px"), self.export_scale)
+        cam_form.addRow(tr("Export Model Units (AE)"), self.model_unit)
         camera_section = CollapsibleSection(tr("Camera Settings"), advanced_camera)
 
         layout = QVBoxLayout(self)
@@ -498,7 +506,7 @@ class PropertiesPanel(QWidget):
             self.measure.setCurrentIndex(FILM_MEASURES.index(comp.measure) if comp.measure in FILM_MEASURES else 0)
             self._refresh_lens_views()
             self.depth_range.setValue(scene.depth_far_ratio)
-            self.export_scale.setValue(scene.export_settings.scale)
+            self.model_unit.setCurrentIndex(list(MODEL_UNITS).index(scene.export_settings.model_unit))
             self._loading = False
         self.set_units(scene, self.unit_ids if scene is not None else [])
 

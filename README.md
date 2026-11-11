@@ -40,7 +40,7 @@ python -m pytest
   - `R`（凹凸）は深度マップから求めます。使うのは、その単位が統合画像で実際に見えている画素だけです。
   - `P` は、レイヤーが重なる場所でPSDの重なり順を保つための押し込み量です。設定から導出されるため保存しません。
 - 深度マップの「近さ」は `1/Z` について線形に対応させます。近さ1が `Z = f`、近さ0が `Z = f × シーンの奥行き範囲` です。
-- 基準面（`Z = f`）では1単位が1画素に当たり、`f` は After Effects のカメラのズーム値と同じです。書き出すGLBは「書き出し単位 / px」（初期値0.01）で縮小し、初期設定では基準面が z = 0 に来るよう平行移動します。
+- 基準面（`Z = f`）では1単位が1画素に当たり、`f` は After Effects のカメラのズーム値と同じです。書き出すGLBは、After Effects のモデル設定（「書き出しのモデル単位」と同じモデル単位、オブジェクトスケール100%）で読み込むとコンポの1 pxがAEの1 pxになる大きさで書き出します（AEは1 m＝512 pxとして読み込むため、初期値のメートルでは1 px＝1/512 m）。初期設定では基準面が z = 0 に来るよう平行移動します。
 - **オーバーレイ** は、光芒・靄・柔らかい花など、主に半透明のレイヤーです。
   - 自動で判定し、単位ごとに切り替えられます。
   - 深度マップではなく、下にあるレイヤーから奥行きを決めます。
@@ -127,7 +127,7 @@ python -m pytest
   - `R` is measured from the depth map, using only the pixels where the unit is visible in the composite.
   - `P` is the push-back field that keeps the PSD stacking order where layers overlap. It is derived data and is not saved.
 - Depth-map nearness maps linearly in `1/Z`: nearness 1 → `Z = f`, nearness 0 → `Z = f × Scene Depth Range`.
-- One unit equals one pixel at the reference plane (`Z = f`), and `f` is After Effects' camera Zoom. The exported GLB is scaled by *Export Units per px* (default 0.01). By default it is shifted so the reference plane lands at z = 0.
+- One unit equals one pixel at the reference plane (`Z = f`), and `f` is After Effects' camera Zoom. The exported GLB is scaled so that After Effects, with the same Model Units as *Export Model Units (AE)* and Object Scale 100 %, imports one composition pixel as one AE pixel (AE reads 1 m as 512 px, so the default, metres, is 1/512 m per px). By default it is shifted so the reference plane lands at z = 0.
 - **Overlays** are mostly translucent layers: light rays, haze, soft flowers. They are detected automatically and can be toggled per unit. An overlay takes its depth from the layers below it instead of from the depth map, and never pushes them back. Until a depth map is loaded the layers below have no relief, so the overlay stays flat.
 
 ### Depth Anything on this machine

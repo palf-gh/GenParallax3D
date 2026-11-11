@@ -120,7 +120,11 @@ def scene_from_dict(data: dict, doc: PsdDocument, base: Path | None = None,
     else:  # projects from before compositions: the image filled the frame
         scene = Scene.create(doc.width, doc.height, data["camera"]["fov_y_deg"])
     scene.colour_management = data.get("colour_management", "sRGB")
-    scene.export_settings = ExportSettings(**data.get("export", {}))
+    export = dict(data.get("export", {}))
+    # Before the After Effects check the scale was a free number (0.01 per px by default),
+    # which AE showed 5.12 times too large; such projects now export in metres.
+    export.pop("scale", None)
+    scene.export_settings = ExportSettings(**export)
 
     depth = data.get("depth", {})
     scene.depth_far_ratio = depth.get("far_ratio", 3.0)

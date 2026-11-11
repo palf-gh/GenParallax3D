@@ -178,6 +178,8 @@ JA: dict[str, str] = {
     "Depth Strength (px)": "凹凸の強さ (px)",
     "Depth Offset (px)": "奥行きオフセット (px)",
     "Depth Smoothing (σ px)": "深度の平滑化 (σ px)",
+    "Gaussian σ in image pixels; large values smooth thin lattice layers such as towers":
+        "深度マップをぼかすガウスσ（画像px）。鉄塔のような細い格子状のレイヤーでは大きな値が有効です",
     "Lay onto layers below (overlay)": "下のレイヤーに沿わせる（オーバーレイ）",
     "For light rays, haze, scattered petals…: take depth from the layers underneath instead of the depth map, "
     "which only shows what is behind a translucent layer":
@@ -245,7 +247,18 @@ JA: dict[str, str] = {
     "Zoom / Focal": "ズーム / 焦点距離",
     "Parallax Amplitude (× width)": "パララックスの振れ幅（×幅）",
     "Parallax Period": "パララックスの周期",
-    "Export Units per px": "書き出し単位 / px",
+    "Export Model Units (AE)": "書き出しのモデル単位 (AE)",
+    "Pick the same Model Units in After Effects' Model Settings and keep Object Scale at 100 %: one composition "
+    "pixel is then one pixel in After Effects":
+        "After Effects のモデル設定で同じモデル単位を選び、オブジェクトスケールを 100% のままにすると、"
+        "コンポジションの 1 px が After Effects でも 1 px になります",
+    "Centimetres": "センチメートル",
+    "Metres": "メートル",
+    "Kilometres": "キロメートル",
+    "Inches": "インチ",
+    "Feet": "フィート",
+    "Yards": "ヤード",
+    "Miles": "マイル",
     "{n} units": "{n} 個の単位",
     "{layers} layer(s), {w}×{h} px at ({x}, {y}), {verts} vertices":
         "{layers} レイヤー、{w}×{h} px（位置 {x}, {y}）、頂点 {verts}",

@@ -6,9 +6,11 @@ comp centre, with ``zoom`` in pixels. The scene's :class:`Composition` holds the
 same numbers as AE's Camera Settings dialog; the image lies on AE's ``z = 0``
 plane at its scale, and all values written here are composition pixels.
 
-How After Effects scales and orients imported glTF geometry still has to be
-checked in Phase 5; the mapping used here is recorded in the file so it can be
-corrected without re-exporting the meshes.
+Imported glTF geometry was checked in After Effects 27.0: at Model Units
+"Metres" and Object Scale 100 % one metre is 512 composition pixels, the model's
+origin sits at the layer position (comp centre, z = 0), glTF +Y is AE up and glTF
+-Z is AE +Z. The GLB is scaled so that the unit named in ``model_space`` gives one
+AE pixel per composition pixel.
 """
 
 from __future__ import annotations
@@ -77,12 +79,19 @@ def build_ae_metadata(scene: Scene, export: ExportResult | None = None, doc: Psd
         "model_space": {
             "gltf_axes": "+X right, +Y up, camera looks down -Z",
             "units_per_pixel": s.scale,
+            "after_effects_model_settings": {
+                "model_units": s.model_unit,
+                "object_scale_percent": 100.0,
+                "up_axis": "Y",
+                "flip_z": False,
+                "position": [cw / 2.0, ch / 2.0, 0.0],
+            },
             "origin": s.origin,
             "to_ae": "ae = (W/2 + x/units_per_pixel, H/2 - y/units_per_pixel, -z/units_per_pixel)"
                      if s.origin == "reference_plane" else
                      "ae = (W/2 + x/units_per_pixel, H/2 - y/units_per_pixel, -z/units_per_pixel - zoom_px)",
             "note": "W, H and pixels are those of the composition.",
-            "verified_in_after_effects": False,
+            "verified_in_after_effects": "27.0",
         },
         "export": {
             "mode": s.mode,
@@ -98,3 +107,4 @@ def write_ae_metadata(path: str | Path, scene: Scene, export: ExportResult | Non
     data = build_ae_metadata(scene, export, doc)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+

@@ -6,6 +6,12 @@ pygltflib is used instead of trimesh so we control node names, the
 Exported coordinates: glTF axes (+Y up, camera looks down -Z). With
 ``origin == "reference_plane"`` the scene is shifted so the reference plane
 (Z = f) is at z = 0 and the camera is at ``(0, 0, f * scale)``.
+
+``scale`` follows After Effects' Model Settings: with the default
+``ExportSettings.model_unit`` ("m") a composition pixel is 1/512 m, which AE
+imports at Model Units "Metres", Object Scale 100 % as exactly one pixel (see
+:data:`genparallax.scene.AE_PX_PER_METRE`). AE puts the glTF origin at the layer
+position, so with the default origin the model lines up with AE's default camera.
 """
 
 from __future__ import annotations
@@ -70,13 +76,16 @@ def export_scene(scene: Scene, path: str | Path, mode: str | None = None, scale:
     return ExportResult(files, unit_files)
 
 
-def write_glb(scene: Scene, units: list[ReconstructionUnit], path: str | Path, scale: float = 0.01,
+def write_glb(scene: Scene, units: list[ReconstructionUnit], path: str | Path, scale: float | None = None,
               origin: str = "reference_plane", include_camera: bool = True, alpha_mode: str = "split") -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     builder = _GltfBuilder()
     shift = origin_shift(scene, origin)
     comp = scene.composition
+    if scale is None:
+        scale = scene.export_settings.scale
+    ae_unit = scene.export_settings.model_unit if scale == scene.export_settings.scale else None
     scale = scale * comp.image_scale  # ``scale`` is per composition pixel; vertices are image pixels
     child_nodes = []
 
@@ -132,6 +141,9 @@ def write_glb(scene: Scene, units: list[ReconstructionUnit], path: str | Path, s
             "focal_length_mm": comp.focal_length_mm,
             "film_size_mm": comp.film_size_mm,
             "units_per_composition_pixel": scale / comp.image_scale,
+            # After Effects Model Settings that import one composition pixel as one AE pixel
+            "after_effects_model_units": ae_unit,
+            "after_effects_object_scale_percent": 100.0 if ae_unit else None,
             "origin": origin,
             "colour_management": scene.colour_management,
         }

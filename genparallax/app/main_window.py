@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         self.props.renameRequested.connect(self._on_rename)
         self.props.compositionChanged.connect(self._on_composition_changed)
         self.props.parallaxChanged.connect(self._on_parallax)
-        self.props.exportScaleChanged.connect(self._on_export_scale)
+        self.props.modelUnitChanged.connect(self._on_model_unit)
         self.props.depthRangeChanged.connect(self._on_depth_range)
         self.viewport.unitPicked.connect(self._on_pick)
         self.viewport.statusMessage.connect(self.status)
@@ -784,9 +784,9 @@ class MainWindow(QMainWindow):
         self.viewport.parallax_amplitude = amplitude
         self.viewport.parallax_period = period
 
-    def _on_export_scale(self, scale: float) -> None:
+    def _on_model_unit(self, unit: str) -> None:
         if self.scene is not None:
-            self.scene.export_settings.scale = scale
+            self.scene.export_settings.model_unit = unit
 
     def _show_controls(self) -> None:
         QMessageBox.information(self, tr("Viewport Controls"), tr(

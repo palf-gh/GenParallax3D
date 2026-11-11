@@ -330,10 +330,29 @@ class Composition:
                            self.image_scale)
 
 
+#: After Effects (checked in 27.0) maps 1 metre of an imported 3D model to 512 composition
+#: pixels at Model Units "Metres" and Object Scale 100 %, whatever the comp or model size.
+#: The model's origin goes to the layer position (the comp centre, z = 0 by default), glTF
+#: +Y becomes AE up (-Y) and glTF -Z becomes AE +Z (away from the camera).
+AE_PX_PER_METRE = 512.0
+#: The Model Units of After Effects' Model Settings dialog, in metres.
+MODEL_UNITS: dict[str, float] = {
+    "mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0,
+    "in": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
+}
+
+
+def units_per_px(model_unit: str) -> float:
+    """glTF units per composition pixel for a model AE reads in ``model_unit`` at 100 %."""
+    return 1.0 / (AE_PX_PER_METRE * MODEL_UNITS[model_unit])
+
+
 @dataclass
 class ExportSettings:
     mode: str = "combined"  # "combined" or "separate"
-    scale: float = 0.01  # world units per composition pixel
+    #: The unit to pick in After Effects' Model Settings (Object Scale 100 %) so that one
+    #: composition pixel here is one pixel in AE.
+    model_unit: str = "m"
     origin: str = "reference_plane"  # "reference_plane" or "camera"
     include_camera: bool = True
     output_path: str | None = None
@@ -341,6 +360,15 @@ class ExportSettings:
     #: edges / overlays blended; external renderers then cannot hide layers behind
     #: translucent ones by sorting. "blend": one blended primitive per unit.
     alpha_mode: str = "split"
+
+    def __post_init__(self):
+        if self.model_unit not in MODEL_UNITS:
+            self.model_unit = "m"
+
+    @property
+    def scale(self) -> float:
+        """World units per composition pixel."""
+        return units_per_px(self.model_unit)
 
 
 @dataclass
