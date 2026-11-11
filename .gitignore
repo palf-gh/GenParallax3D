@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.gp3d_cache/
+build/
+dist/
+.commandcode/
+.venv/
+.venv*/
+.idea/
+.vscode/
