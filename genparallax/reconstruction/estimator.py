@@ -13,6 +13,21 @@ from pathlib import Path
 import numpy as np
 
 MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
+AI_MODULES = ("torch", "transformers")
+
+
+def ai_available() -> bool:
+    """Whether the optional ``[ai]`` extra is installed.
+
+    Checked without importing it: torch takes seconds to load. The standalone builds
+    never bundle it, so there this is always ``False``.
+    """
+    from importlib.util import find_spec
+
+    try:
+        return all(find_spec(name) is not None for name in AI_MODULES)
+    except (ImportError, ValueError):
+        return False
 
 
 def cache_key(rgba: np.ndarray) -> str:

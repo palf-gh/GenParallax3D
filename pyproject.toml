@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 ai = ["torch>=2.2", "transformers>=4.45"]
 dev = ["pytest>=8"]
+build = ["pyinstaller>=6.10"]
 
 [project.scripts]
 genparallax3d = "genparallax.app.main_window:main"

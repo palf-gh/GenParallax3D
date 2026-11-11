@@ -29,7 +29,7 @@ from genparallax.reconstruction.constraints import (
     adopt_snapshot, apply_resolution, check_layer_order, resolve_layer_order, snapshot_for_resolution,
 )
 from genparallax.reconstruction.depth import load_depth_image
-from genparallax.reconstruction.estimator import MODEL_ID
+from genparallax.reconstruction.estimator import MODEL_ID, ai_available
 from genparallax.reconstruction.meshing import update_unit_mesh
 from genparallax.scene import ReconstructionMode, Scene
 
@@ -458,6 +458,11 @@ class MainWindow(QMainWindow):
     def estimate_depth(self) -> None:
         if not self._require_scene() or self.depth_job.running:
             return
+        if not ai_available():
+            self.log(tr("AI depth estimation is not available (torch and transformers are not installed)."),
+                     "warning")
+            QMessageBox.information(self, tr("AI depth estimation is not available"), _ai_missing_text())
+            return
         cache = str(cache_dir_for(self.project_path)) if self.project_path else \
             str(Path(tempfile.gettempdir()) / "genparallax3d_cache")
         self.estimate_action.setEnabled(False)
@@ -478,9 +483,12 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.estimate_action.setEnabled(True)
         self.log(tr("Depth estimation failed: {message}", message=message), "error")
-        QMessageBox.warning(self, tr("Depth estimation failed"),
-                            tr("{message}\n\nInstall the AI extras with:  pip install torch transformers",
-                               message=message))
+        if getattr(sys, "frozen", False):
+            QMessageBox.warning(self, tr("Depth estimation failed"), message)
+        else:
+            QMessageBox.warning(self, tr("Depth estimation failed"),
+                                tr("{message}\n\nInstall the AI extras with:  pip install torch transformers",
+                                   message=message))
 
     def _apply_global_depth(self, nearness, source: str) -> None:
         if self.task.running:  # e.g. a depth estimate arriving during an export
@@ -806,6 +814,16 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _ai_missing_text() -> str:
+    if getattr(sys, "frozen", False):
+        return tr("The standalone app does not include the AI depth model (torch and transformers).\n\n"
+                  "Load a depth map image instead (Depth > Load Depth Map…), or run GenParallax3D "
+                  "from source with the [ai] extra (see the README).")
+    return tr("AI depth estimation needs torch and transformers.\n\n"
+              "Install the AI extras with:  pip install torch transformers\n\n"
+              "Meanwhile you can load a depth map image (Depth > Load Depth Map…).")
+
+
 def install_language(app: QApplication) -> None:
     """Pick the UI language (saved setting, Japanese by default) and Qt's own translations."""
     code = str(QSettings(APP_NAME, APP_NAME).value("language", "ja"))
@@ -818,6 +836,10 @@ def install_language(app: QApplication) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
+    if "--self-test" in argv[1:]:
+        from genparallax.selftest import run
+
+        return run([a for a in argv[1:] if a != "--self-test"])
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     configure_default_surface_format()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -826,8 +848,9 @@ def main(argv: list[str] | None = None) -> int:
     install_language(app)
     win = MainWindow()
     win.show()
-    if len(argv) > 1:
-        target = argv[1]
+    files = [a for a in argv[1:] if not a.startswith("-")]  # e.g. macOS's -psn_ argument
+    if files:
+        target = files[0]
         if target.lower().endswith(".gp3d"):
             win.open_project(target)
         else:

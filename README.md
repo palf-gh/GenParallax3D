@@ -8,6 +8,17 @@
 
 レイヤー構造を活かした3Dパララックス再構成ツールです。PSD/PSBを読み込み、After Effectsでのカメラワーク用にGLB（glTF 2.0）を書き出します。
 
+### ダウンロード（Pythonは不要）
+
+[Releases](https://github.com/palf-gh/GenParallax3D/releases) から、使っているOS用のzipをダウンロードします。
+
+- **Windows：** `GenParallax3D-<版>-windows-x64.zip` を展開し、フォルダ内の `GenParallax3D.exe` を実行します。フォルダごと置いておいてください（exeだけを移すと動きません）。署名していないため、初回は SmartScreen が出ることがあります。「詳細情報」→「実行」で起動できます。
+- **macOS：** Apple Silicon は `…-macos-arm64.zip`、Intel は `…-macos-x64.zip` です。展開した `GenParallax3D.app` を「アプリケーション」に移します。署名・公証していないため、初回は Finder で右クリック →「開く」で起動します（macOS 15 以降は、システム設定 ▸ プライバシーとセキュリティ の「このまま開く」）。
+- 単体版には AI 深度推定（Depth Anything V2、torch + transformers）は入っていません。深度マップの画像を「深度 ▸ 深度マップを読み込む…」で読み込んで使います。AI推定が必要な場合は、下の方法でソースから実行してください。
+- 動作確認：`GenParallax3D --self-test report.txt` で、同梱ライブラリとOpenGLを確認し結果をファイルに書きます（終了コード0で成功）。
+
+単体版は `python packaging/build.py` で作れます（AI機能を入れていない環境で実行してください）。タグ `v*` をプッシュすると GitHub Actions が Windows と macOS 版を作り、リリースに添付します。
+
 ### 実行方法
 
 ```bash
@@ -94,6 +105,17 @@ torch と torchvision を揃えたビルド（GPU推論にはCUDA版）を入れ
 ## English
 
 Layer-aware 3D parallax reconstruction: PSD/PSB in, GLB (glTF 2.0) out, for camera moves in After Effects.
+
+### Download (no Python needed)
+
+Get the zip for your system from [Releases](https://github.com/palf-gh/GenParallax3D/releases).
+
+- **Windows:** unzip `GenParallax3D-<version>-windows-x64.zip` and run `GenParallax3D.exe` inside the folder. Keep the folder together; the exe does not work on its own. The app is unsigned, so SmartScreen may appear the first time: choose "More info" → "Run anyway".
+- **macOS:** `…-macos-arm64.zip` for Apple Silicon, `…-macos-x64.zip` for Intel. Move `GenParallax3D.app` to Applications. It is neither signed nor notarised, so open it the first time with right-click → Open (on macOS 15 and later: System Settings ▸ Privacy & Security ▸ "Open Anyway").
+- The standalone app does not include AI depth estimation (Depth Anything V2, torch + transformers). Load a depth map image with Depth ▸ Load Depth Map… instead, or run from source with the `[ai]` extra.
+- Health check: `GenParallax3D --self-test report.txt` exercises the bundled libraries and OpenGL and writes the result to the file (exit code 0 means it passed).
+
+Build it yourself with `python packaging/build.py` (in an environment without the AI extra). Pushing a `v*` tag makes GitHub Actions build the Windows and macOS apps and attach them to a release.
 
 ### Run
 

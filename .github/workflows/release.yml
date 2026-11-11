@@ -1,0 +1,107 @@
+name: Build standalone apps
+
+# Tag pushes (v1.2.3) build Windows and macOS apps and attach them to a GitHub Release.
+# A manual run builds the same apps and keeps them as workflow artefacts only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # The Intel build is a bonus: if it fails, the others are still released.
+    continue-on-error: ${{ matrix.optional == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: macOS Apple Silicon
+            os: macos-15
+          - name: macOS Intel
+            os: macos-15-intel
+            optional: true
+    env:
+      QT_QPA_PLATFORM: offscreen  # no display on the runners
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # constraints.txt pins the versions the local build was verified with.
+      - name: Install dependencies (without the AI extra)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev,build]" -c packaging/constraints.txt
+
+      - name: Check the version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(python -c "import genparallax; print(genparallax.__version__)")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match genparallax.__version__ ($version)"
+            exit 1
+          fi
+
+      # GL tests skip themselves where no OpenGL 3.3 context can be created.
+      - name: Run tests
+        run: python -m pytest -q
+
+      # The OpenGL part of the self-test is run separately below: the Windows runners
+      # have no OpenGL 3.3 driver, so it must not block a release there.
+      - name: Build, self-test and archive
+        run: python packaging/build.py --no-gl
+
+      - name: Self-test with OpenGL (informational)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: dist/GenParallax3D.app/Contents/MacOS/GenParallax3D --self-test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GenParallax3D-${{ runner.os }}-${{ runner.arch }}
+          path: dist/GenParallax3D-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l artefacts
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artefacts/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artefacts/*.zip \
+              --title "GenParallax3D $GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
