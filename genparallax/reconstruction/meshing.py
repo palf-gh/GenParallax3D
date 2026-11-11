@@ -132,6 +132,11 @@ def build_adaptive_grid(alpha: np.ndarray, relief: np.ndarray | None, step: int,
 #: error dZ changes the parallax of a point by the fraction dZ / Z, so a relative
 #: tolerance looks the same on near and far layers.
 SIMPLIFY_DEPTH_RATIO = {"off": None, "standard": 0.004, "strong": 0.012}
+#: Texture shift allowed inside a triangle in the reference view, in px. UVs are
+#: interpolated perspective-correctly (by the GPU and in After Effects), so inside a
+#: triangle whose corners lie at different depths a texel lands up to about
+#: ``size * dZ / (4 Z)`` px from its screen position, although every vertex is exact.
+SIMPLIFY_UV_PX = {"off": None, "standard": 0.1, "strong": 0.2}
 #: Largest cell allowed across the silhouette (and across the opaque/translucent
 #: boundary), in px: the overdraw into transparent texels stays below this.
 SIMPLIFY_EDGE_PX = {"off": None, "standard": 8, "strong": 16}
@@ -303,7 +308,8 @@ class InterpolationError:
 
 def simplified_levels(alpha: np.ndarray, step: int, tolerance: float, relief_error: InterpolationError | None,
                       strength: float, push_error: InterpolationError | None, levels: int,
-                      depth: float | None = None, edge: int = 0) -> tuple[np.ndarray, list[np.ndarray]]:
+                      depth: float | None = None, edge: int = 0,
+                      uv_tolerance: float | None = None) -> tuple[np.ndarray, list[np.ndarray]]:
     """Leaf level of every minimum cell for the simplified mesh (-1 = no geometry).
 
     A cell is kept whole when it lies entirely inside the silhouette and its triangles
@@ -312,7 +318,9 @@ def simplified_levels(alpha: np.ndarray, step: int, tolerance: float, relief_err
 
     * ``strength * err_R + err_P`` bounds the linear-interpolation error;
     * ``dZ**2 / (4 Z_min)`` bounds the extra error of interpolating ``1/Z``
-      (perspective-correct, as the GPU does) instead of ``Z`` over the cell.
+      (perspective-correct, as the GPU does) instead of ``Z`` over the cell;
+    * the texture shift of perspective-correct UV interpolation,
+      ``diagonal * dZ / (4 Z_min)``, must stay within ``uv_tolerance`` px.
 
     Cells straddling the silhouette are split down to level ``edge``, so they
     cover every visible texel with less than one edge cell of overdraw. So are cells
@@ -360,7 +368,11 @@ def simplified_levels(alpha: np.ndarray, step: int, tolerance: float, relief_err
             low += push_error.lo[k][ys, xs]
         if depth is not None:
             z_min = depth + low
-            e += np.where(z_min > 0.05 * depth, span ** 2 / (4.0 * np.maximum(z_min, 1e-9)), np.inf)
+            safe = np.maximum(z_min, 1e-9)
+            e += np.where(z_min > 0.05 * depth, span ** 2 / (4.0 * safe), np.inf)
+            if uv_tolerance is not None:
+                shift = np.sqrt(2.0) * (step << k) * span / (4.0 * safe)
+                e = np.where(shift > uv_tolerance, np.inf, e)
         return e
 
     level = np.full((gh, gw), -1, dtype=np.int16)
@@ -408,7 +420,8 @@ def build_simplified_grid(alpha: np.ndarray, step: int, tolerance: float, relief
                           strength: float = 0.0, push: np.ndarray | None = None,
                           depth: float | None = None, max_factor: int = SIMPLIFY_MAX_FACTOR,
                           relief_error: InterpolationError | None = None,
-                          push_error: InterpolationError | None = None, edge: int = 0) -> dict:
+                          push_error: InterpolationError | None = None, edge: int = 0,
+                          uv_tolerance: float | None = None) -> dict:
     """Simplified mesh: large triangles wherever the surface is close to planar.
 
     Approach: an error-bounded quadtree remesh rather than edge-collapse decimation.
@@ -420,7 +433,9 @@ def build_simplified_grid(alpha: np.ndarray, step: int, tolerance: float, relief
     Compared with edge collapse this
 
     * keeps every vertex on an integer pixel corner, hence on its reference ray and
-      with an exact UV, so the reference view still reproduces the PSD;
+      with an exact UV; inside a triangle, perspective-correct UV interpolation still
+      shifts the texture where the depth varies, so that shift is bounded per cell
+      (``uv_tolerance``) and the reference view keeps reproducing the PSD;
     * covers every visible texel by construction: silhouette cells are split down to
       level ``edge`` (a few px), so the overdraw into transparent texels stays slight;
     * is crack-free (2:1 balanced, edge midpoints instead of T-junctions);
@@ -438,11 +453,12 @@ def build_simplified_grid(alpha: np.ndarray, step: int, tolerance: float, relief
     if push is not None and push_error is None:
         push_error = InterpolationError(push, step, levels)
     level, _ = simplified_levels(alpha, step, tolerance, relief_error, strength, push_error, levels, depth,
-                                 edge)
+                                 edge, uv_tolerance)
     xy, faces = _triangulate(level, levels, step, w, h)
     uv = (xy / np.array([w, h], dtype=np.float64)).astype(np.float32)
     return {"step": step, "shape": (h, w), "xy": xy, "faces": faces, "uv": uv, "level": level,
-            "relief_error": relief_error, "push": push, "levels": levels, "depth": depth, "edge": edge}
+            "relief_error": relief_error, "push": push, "levels": levels, "depth": depth, "edge": edge,
+            "uv_tolerance": uv_tolerance}
 
 
 def _balance(level: np.ndarray, any_vis: list[np.ndarray], levels: int) -> None:
@@ -725,7 +741,8 @@ def _build_grid_for(unit: ReconstructionUnit, old: dict | None, push_error=None)
             relief_error = old.get("relief_error")
     grid = build_simplified_grid(unit.alpha, unit.mesh_density, tolerance, relief, strength, push,
                                  depth_bucket(unit.effective_base_depth), relief_error=relief_error,
-                                 push_error=push_error, edge=simplify_edge_level(unit))
+                                 push_error=push_error, edge=simplify_edge_level(unit),
+                                 uv_tolerance=SIMPLIFY_UV_PX.get(unit.mesh_simplify, SIMPLIFY_UV_PX["standard"]))
     if relief is not None:
         grid["relief_key"] = _relief_key(unit)
     return grid
@@ -741,7 +758,8 @@ def _push_still_fits(unit: ReconstructionUnit, grid: dict) -> tuple[bool, Interp
     push_error = InterpolationError(push, grid["step"], grid["levels"]) if push is not None else None
     level, _ = simplified_levels(unit.alpha, grid["step"], simplify_tolerance(unit),
                                  grid.get("relief_error") if relief is not None else None,
-                                 strength, push_error, grid["levels"], grid["depth"], grid["edge"])
+                                 strength, push_error, grid["levels"], grid["depth"], grid["edge"],
+                                 grid["uv_tolerance"])
     return bool(np.array_equal(level, grid["level"])), push_error
 
 
