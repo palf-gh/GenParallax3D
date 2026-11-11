@@ -11,7 +11,7 @@ from PySide6.QtCore import QFileSystemWatcher, QLibraryInfo, QSettings, Qt, QTim
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
-    QProgressBar, QScrollArea, QSplitter, QToolBar,
+    QProgressBar, QSplitter, QToolBar,
 )
 
 from genparallax import __version__
@@ -79,15 +79,15 @@ class MainWindow(QMainWindow):
         self.viewport = Viewport()
         self.layers = LayerPanel()
         self.props = PropertiesPanel()
-        props_scroll = QScrollArea()
-        props_scroll.setWidgetResizable(True)
-        props_scroll.setWidget(self.props)
+        props_width = self.props.minimumSizeHint().width()
+        self.props.setMinimumWidth(props_width)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.layers)
         splitter.addWidget(self.viewport)
-        splitter.addWidget(props_scroll)
+        splitter.addWidget(self.props)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([260, 900, 360])
+        splitter.setCollapsible(2, False)
+        splitter.setSizes([260, 900, props_width])
         self.setCentralWidget(splitter)
 
         self.log_view = QPlainTextEdit(readOnly=True)

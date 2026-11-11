@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QStyle, QToolButton, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QScrollArea, QTabWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from genparallax.app.i18n import tr, tr_message
@@ -226,6 +226,22 @@ class CollapsibleSection(QWidget):
         self.button.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
 
 
+def _scroll_page(widgets: list[QWidget]) -> QScrollArea:
+    """A vertically scrolling tab page; it is never narrower than its contents."""
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(4, 4, 4, 4)
+    for w in widgets:
+        layout.addWidget(w)
+    layout.addStretch(1)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setWidget(page)
+    return scroll
+
+
 class PropertiesPanel(QWidget):
     #: (unit ids, attribute, value, needs_relief_refresh)
     unitParamChanged = Signal(list, str, object, bool)
@@ -279,7 +295,6 @@ class PropertiesPanel(QWidget):
         form.addRow(self.info_label)
         form.addRow(tr("Reconstruction Mode"), self.mode_combo)
         form.addRow(tr("Z Position (px)"), self.z_position)
-        form.addRow(tr("Camera Distance (px)"), self.distance)
         form.addRow(tr("Depth Strength (px)"), self.strength)
         form.addRow(self.conform)
 
@@ -339,14 +354,19 @@ class PropertiesPanel(QWidget):
         custom_row.addWidget(self.custom_depth)
         custom_row.addWidget(browse)
         custom_row.addWidget(clear)
+        dform.addRow(tr("Camera Distance (px)"), self.distance)
         dform.addRow(tr("Depth Offset (px)"), self.offset)
         dform.addRow(tr("Depth Smoothing (σ px)"), self.smoothing)
         dform.addRow(tr("Edge Inset"), self.edge_inset)
         dform.addRow(tr("Occlusion Inset"), self.occlusion_inset)
-        dform.addRow(tr("Mesh Density"), density_row)
-        dform.addRow(tr("Mesh Detail"), self.detail)
         dform.addRow(tr("Custom Depth Map"), custom_row)
         unit_section = CollapsibleSection(tr("Depth Settings"), advanced_unit)
+        mesh_body = QWidget()
+        self.mesh_form = mform = QFormLayout(mesh_body)
+        mform.setContentsMargins(0, 0, 0, 0)
+        mform.addRow(tr("Mesh Density"), density_row)
+        mform.addRow(tr("Mesh Detail"), self.detail)
+        mesh_section = CollapsibleSection(tr("Mesh"), mesh_body)
 
         # --- composition and camera (basic) ------------------------------
         comp_box = QGroupBox(tr("Composition"))
@@ -471,24 +491,47 @@ class PropertiesPanel(QWidget):
         cam_form.addRow(tr("Film Size Measured"), self.measure)
         cam_form.addRow(tr("Units"), self.units)
         cam_form.addRow(tr("Measured Composition Size"), self.measured)
-        cam_form.addRow(tr("Scene Depth Range"), self.depth_range)
-        cam_form.addRow(tr("Parallax Amplitude (× width)"), self.amplitude)
-        cam_form.addRow(tr("Parallax Period"), self.period)
-        cam_form.addRow(tr("Export Model Units (AE)"), self.model_unit)
         camera_section = CollapsibleSection(tr("Camera Settings"), advanced_camera)
+        scene_body = QWidget()
+        sform = QFormLayout(scene_body)
+        sform.setContentsMargins(0, 0, 0, 0)
+        sform.addRow(tr("Scene Depth Range"), self.depth_range)
+        sform.addRow(tr("Parallax Amplitude (× width)"), self.amplitude)
+        sform.addRow(tr("Parallax Period"), self.period)
+        scene_section = CollapsibleSection(tr("Depth Range and Preview"), scene_body)
+        export_body = QWidget()
+        eform = QFormLayout(export_body)
+        eform.setContentsMargins(0, 0, 0, 0)
+        eform.addRow(tr("Export Model Units (AE)"), self.model_unit)
+        export_section = CollapsibleSection(tr("Export"), export_body)
 
+        # Two tabs: the selected layer, and the scene as a whole. In each, the group box
+        # holds what most users need; the folded sections hold the fine adjustments.
+        self.tabs = QTabWidget()
+        self.tabs.addTab(_scroll_page([unit_box, unit_section, mesh_section]), tr("Layer"))
+        self.tabs.addTab(_scroll_page([comp_box, camera_section, scene_section, export_section]), tr("Scene"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(unit_box)
-        layout.addWidget(unit_section)
-        layout.addWidget(comp_box)
-        layout.addWidget(camera_section)
-        layout.addStretch(1)
-        self._unit_widgets = [unit_box, unit_section]
-        self._composition_widgets = [comp_box, camera_section]
+        layout.addWidget(self.tabs)
+        self._unit_widgets = [unit_box, unit_section, mesh_section]
+        self._composition_widgets = [comp_box, camera_section, scene_section, export_section]
         self.set_scene(None)
 
     # ------------------------------------------------------------------
+    def minimumSizeHint(self):  # noqa: N802 (Qt API)
+        """Wide enough for the widest page and its expanded sections, plus a scroll bar."""
+        hint = super().minimumSizeHint()
+        width = 0
+        for i in range(self.tabs.count()):
+            page = self.tabs.widget(i).widget()
+            width = max(width, page.sizeHint().width())
+            margins = page.layout().contentsMargins()
+            for section in page.findChildren(CollapsibleSection):  # folded ones count as open
+                width = max(width, section.body.sizeHint().width() + margins.left() + margins.right())
+        width += self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent) + 8
+        hint.setWidth(max(hint.width(), width))
+        return hint
+
     def set_scene(self, scene: Scene | None) -> None:
         self.scene = scene
         for w in self._composition_widgets:

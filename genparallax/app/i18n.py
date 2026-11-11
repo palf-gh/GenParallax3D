@@ -248,6 +248,10 @@ JA: dict[str, str] = {
     "Parallax Amplitude (× width)": "パララックスの振れ幅（×幅）",
     "Parallax Period": "パララックスの周期",
     "Export Model Units (AE)": "書き出しのモデル単位 (AE)",
+    "Mesh": "メッシュ",
+    "Depth Range and Preview": "奥行きの範囲とプレビュー",
+    "Export": "書き出し",
+    "Scene": "シーン",
     "Pick the same Model Units in After Effects' Model Settings and keep Object Scale at 100 %: one composition "
     "pixel is then one pixel in After Effects":
         "After Effects のモデル設定で同じモデル単位を選び、オブジェクトスケールを 100% のままにすると、"
