@@ -103,8 +103,12 @@ def _check_gui(show: bool, log) -> None:
     mw.configure_default_surface_format()
     QApplication.setAttribute(mw.Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication([sys.argv[0]])
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+
+    translations = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    assert QTranslator(app).load("qtbase_ja", translations), f"qtbase_ja.qm not found in {translations}"
     mw.install_language(app)
-    log(f"qt: {app.platformName()}, translators ok")
+    log(f"qt: {app.platformName()}, Japanese Qt translations found")
     win = mw.MainWindow()
     log(f"gui: main window built; AI depth available: {ai_available()}")
     if show:
