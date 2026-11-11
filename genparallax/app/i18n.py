@@ -303,6 +303,21 @@ JA: dict[str, str] = {
     "Depth estimation failed": "深度推定に失敗しました",
     "{message}\n\nInstall the AI extras with:  pip install torch transformers":
         "{message}\n\nAI機能は次のコマンドで入れられます： pip install torch transformers",
+    "AI depth estimation is not available (torch and transformers are not installed).":
+        "AIによる深度推定は使えません（torch と transformers が入っていません）。",
+    "AI depth estimation is not available": "AIによる深度推定は使えません",
+    "The standalone app does not include the AI depth model (torch and transformers).\n\n"
+    "Load a depth map image instead (Depth > Load Depth Map…), or run GenParallax3D "
+    "from source with the [ai] extra (see the README).":
+        "単体版のアプリにはAI深度モデル（torch と transformers）が入っていません。\n\n"
+        "代わりに深度マップの画像を読み込んでください（深度 > 深度マップを読み込む…）。"
+        "AI推定を使う場合は、[ai] 付きでソースから実行してください（README を参照）。",
+    "AI depth estimation needs torch and transformers.\n\n"
+    "Install the AI extras with:  pip install torch transformers\n\n"
+    "Meanwhile you can load a depth map image (Depth > Load Depth Map…).":
+        "AIによる深度推定には torch と transformers が必要です。\n\n"
+        "次のコマンドで入れられます： pip install torch transformers\n\n"
+        "それまでは深度マップの画像を読み込んで使えます（深度 > 深度マップを読み込む…）。",
     "Building depth meshes…": "深度メッシュを作成中…",
     "Applied depth map ({name}); base depth and strength taken from it.":
         "深度マップ（{name}）を適用し、基準奥行きと凹凸の強さを割り当てました。",
