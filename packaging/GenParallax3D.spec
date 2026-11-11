@@ -42,7 +42,7 @@ a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(str(ROOT / "LICENSE"), "."), (str(ROOT / "THIRD_PARTY_NOTICES.md"), ".")],
     # moderngl picks its OpenGL loader (glcontext backend) by name at run time.
     hiddenimports=collect_submodules("glcontext") + ["genparallax.selftest"],
     hookspath=[],

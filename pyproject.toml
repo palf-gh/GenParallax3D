@@ -7,6 +7,7 @@ name = "genparallax3d"
 version = "0.1.0"
 description = "Layer-aware 3D parallax reconstruction from PSD/PSB to GLB for After Effects"
 requires-python = ">=3.11"
+license = {text = "MIT"}
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",

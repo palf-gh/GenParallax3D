@@ -12,12 +12,28 @@
 
 [Releases](https://github.com/palf-gh/GenParallax3D/releases) から、使っているOS用のzipをダウンロードします。
 
-- **Windows：** `GenParallax3D-<版>-windows-x64.zip` を展開し、フォルダ内の `GenParallax3D.exe` を実行します。フォルダごと置いておいてください（exeだけを移すと動きません）。署名していないため、初回は SmartScreen が出ることがあります。「詳細情報」→「実行」で起動できます。
-- **macOS：** Apple Silicon は `…-macos-arm64.zip`、Intel は `…-macos-x64.zip` です。展開した `GenParallax3D.app` を「アプリケーション」に移します。署名・公証していないため、初回は Finder で右クリック →「開く」で起動します（macOS 15 以降は、システム設定 ▸ プライバシーとセキュリティ の「このまま開く」）。
+- Windows：`GenParallax3D-<版>-windows-x64.zip` を展開し、フォルダ内の `GenParallax3D.exe` を実行します。フォルダごと置いておいてください（exeだけを移すと動きません）。署名していないため、初回は SmartScreen が出ることがあります。「詳細情報」→「実行」で起動できます。
+- macOS：Apple Silicon は `…-macos-arm64.zip`、Intel は `…-macos-x64.zip` です。展開した `GenParallax3D.app` を「アプリケーション」に移します。署名・公証していないため、初回は Finder で右クリック →「開く」で起動します（macOS 15 以降は、システム設定 ▸ プライバシーとセキュリティ の「このまま開く」）。
 - 単体版には AI 深度推定（Depth Anything V2、torch + transformers）は入っていません。深度マップの画像を「深度 ▸ 深度マップを読み込む…」で読み込んで使います。AI推定が必要な場合は、下の方法でソースから実行してください。
 - 動作確認：`GenParallax3D --self-test report.txt` で、同梱ライブラリとOpenGLを確認し結果をファイルに書きます（終了コード0で成功）。
 
 単体版は `python packaging/build.py` で作れます（AI機能を入れていない環境で実行してください）。タグ `v*` をプッシュすると GitHub Actions が Windows と macOS 版を作り、リリースに添付します。
+
+### 使い方
+
+手順は [使い方ガイド](docs/usage.md) にまとめています。
+
+### ライセンス
+
+- GenParallax3D は [MITライセンス](LICENSE) です。
+- 使っているライブラリとモデルは、それぞれのライセンスに従います。一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にあります。配布版に同梱している Qt（PySide6）は LGPL-3.0 です。
+
+### AIモデルについて
+
+- 「深度を推定」は [Depth Anything V2 Small](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf)（Apache-2.0）を使います。初回の実行時に Hugging Face からダウンロードします。
+- 配布版にはモデルも torch / transformers も入っていません。
+- Depth Anything V2 の Base / Large モデルは CC-BY-NC-4.0（非商用）のため、このアプリでは使いません。モデルを差し替える場合は、そのモデルのライセンスを確認してください。
+- 推定結果はあくまで目安です。PSDのレイヤー順や手での調整で補正する前提です。
 
 ### 実行方法
 
@@ -51,8 +67,8 @@ python -m pytest
   - `R`（凹凸）は深度マップから求めます。使うのは、その単位が統合画像で実際に見えている画素だけです。
   - `P` は、レイヤーが重なる場所でPSDの重なり順を保つための押し込み量です。設定から導出されるため保存しません。
 - 深度マップの「近さ」は `1/Z` について線形に対応させます。近さ1が `Z = f`、近さ0が `Z = f × シーンの奥行き範囲` です。
-- 基準面（`Z = f`）では1単位が1画素に当たり、`f` は After Effects のカメラのズーム値と同じです。書き出すGLBは、After Effects のモデル設定（「書き出しのモデル単位」と同じモデル単位、オブジェクトスケール100%）で読み込むとコンポの1 pxがAEの1 pxになる大きさで書き出します（AEは1 m＝512 pxとして読み込むため、初期値のメートルでは1 px＝1/512 m）。初期設定では基準面が z = 0 に来るよう平行移動します。
-- **オーバーレイ** は、光芒・靄・柔らかい花など、主に半透明のレイヤーです。
+- 基準面（`Z = f`）では1単位が1画素に当たり、`f` は After Effects のカメラのズーム値と同じです。書き出すGLBの大きさは、After Effects のモデル設定で「書き出しのモデル単位」と同じモデル単位を選び、オブジェクトスケールを100%にして読み込むと、コンポの1 pxがAEの1 pxになるようにしています。AEは1 mを512 pxとして読み込むため、初期値のメートルでは1 px＝1/512 mです。初期設定では基準面が z = 0 に来るよう平行移動します。
+- **オーバーレイ**は光芒・靄・柔らかい花など、主に半透明のレイヤーです。
   - 自動で判定し、単位ごとに切り替えられます。
   - 深度マップではなく、下にあるレイヤーから奥行きを決めます。
   - 下のレイヤーを押し込むことはありません。
@@ -68,9 +84,9 @@ torch と torchvision を揃えたビルド（GPU推論にはCUDA版）を入れ
 
 ### 現状
 
-- **フェーズ1〜2：** 実装・テスト済みです。
-- **フェーズ3：** Depth Anything V2 Small を実PSDで確認しました（CPUでモデルのダウンロード込み約1分）。
-- **フェーズ4：** 実装済みで、11レイヤーの実PSDで確認しました。アプリ内の基準ビューとPSD統合画像の差は平均0.6/255です。対応している機能は次のとおりです。
+- フェーズ1〜2：実装・テスト済みです。
+- フェーズ3：Depth Anything V2 Small を実PSDで確認しました（CPUでモデルのダウンロード込み約1分）。
+- フェーズ4：実装済みで、11レイヤーの実PSDで確認しました。アプリ内の基準ビューとPSD統合画像の差は平均0.6/255です。対応している機能は次のとおりです。
   - 隠れ領域を除いた奥行きの割り当て
   - レイヤー順の拘束
   - オーバーレイ
@@ -78,25 +94,25 @@ torch と torchvision を揃えたビルド（GPU推論にはCUDA版）を入れ
   - 適応メッシュ
   - 深度差分表示
   - PSDの再読み込みと自動再読み込み
-- **外部のglTFレンダラー：** レンダラーが自分で物体を並べ替えると、半透明レイヤーが背後のものを隠すことがあります。
-  - 初期設定では、各単位を2つのプリミティブで書き出します。不透明な部分はアルファテスト（MASK）、半透明の縁はブレンドです。
+- 外部のglTFレンダラー：レンダラーが自分で物体を並べ替えると、半透明レイヤーが背後のものを隠すことがあります。
+  - 初期設定では各単位を2つのプリミティブで書き出します。不透明な部分はアルファテスト（MASK）、半透明の縁はブレンドです。
   - オーバーレイはすべてブレンドのままです。
   - ファイル ▸ 書き出すGLBの透明表現 で切り替えられます。
   - three.js の標準の並べ替えのままで、実PSDとの差は平均0.73/255（16/255を超える画素は0.2%）です。すべてブレンドにすると10.6/255です。
   - After Effects での確認はまだです。
-- **操作性**（11レイヤー、1494×840のPSDでの値）：
+- 操作性（11レイヤー、1494×840のPSDでの値）
   - PSDを開く、深度の適用、再読み込み、書き出しは裏のスレッドで動きます。その間は編集だけを止め、ウィンドウとビューポートは反応し続けます（停止は0.3秒未満）。
   - スライダーの編集は約1msでメッシュに反映されます。
   - レイヤー順の処理は裏のスレッドで、最短300msおきに実行します。スライダーをドラッグしている間も止まりません。
   - 実行中に編集されなかった単位には結果をすぐに反映するので、ドラッグに合わせて下のレイヤーが追従します。
-- **UIの言語：** 初期設定は日本語で、表示 ▸ 言語 で切り替えられます（再起動が必要）。コード内の文字列はイギリス英語で、`genparallax/app/i18n.py` で翻訳しています。
-- **フェーズ5（After Effects での確認）：** まだ始めていません。
+- UIの言語：初期設定は日本語で、表示 ▸ 言語 で切り替えられます（再起動が必要）。コード内の文字列はイギリス英語で、`genparallax/app/i18n.py` で翻訳しています。
+- フェーズ5（After Effects での確認）：GLBの大きさ・原点・向きは After Effects 27.0 で確認しました。カメラの一致はまだ確認していません。
 
 ### 性能に関するメモ
 
 - `document/psd_compat.py` は、「ZIP（予測付き）」チャンネルを展開する psd-tools の純Python実装を、NumPy版に置き換えます。出力はバイト単位で同一で、大きなファイルの読み込みは約4倍速くなります。
 - 各メッシュの「画素→三角形」の対応表は、メッシュの位相ごとに1回だけ計算します。深度を編集したときは `1/Z` を補間し直すだけです。
-- レイヤー順の処理は、自分の設定と、上に重なるレイヤーのメッシュ版番号が変わった単位だけをやり直します。
+- レイヤー順の処理は自分の設定と、上に重なるレイヤーのメッシュ版番号が変わった単位だけをやり直します。
 
 ---
 
@@ -116,6 +132,22 @@ Get the zip for your system from [Releases](https://github.com/palf-gh/GenParall
 - Health check: `GenParallax3D --self-test report.txt` exercises the bundled libraries and OpenGL and writes the result to the file (exit code 0 means it passed).
 
 Build it yourself with `python packaging/build.py` (in an environment without the AI extra). Pushing a `v*` tag makes GitHub Actions build the Windows and macOS apps and attach them to a release.
+
+### Usage
+
+A step-by-step guide (in Japanese) is in [docs/usage.md](docs/usage.md).
+
+### Licence
+
+- GenParallax3D is released under the [MIT License](LICENSE).
+- Third-party libraries and models keep their own licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Qt (PySide6), bundled in the standalone app, is LGPL-3.0.
+
+### About the AI model
+
+- Estimate Depth uses [Depth Anything V2 Small](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf) (Apache-2.0), downloaded from Hugging Face on first use.
+- The standalone app includes neither the model nor torch / transformers.
+- The Base and Large Depth Anything V2 models are CC-BY-NC-4.0 (non-commercial) and are not used. Check the licence of any model you swap in.
+- Estimated depth is a starting point; the PSD layer order and manual adjustment correct it.
 
 ### Run
 
