@@ -111,6 +111,25 @@ def interpolation_bound(unit: ReconstructionUnit) -> np.ndarray | float:
 def smooth_cover(deficit: np.ndarray, radius: float) -> np.ndarray:
     """A smooth field that is >= ``deficit`` everywhere and falls off over ``radius`` px."""
     r = max(1, int(round(radius)))
+    if deficit.size and deficit.min() >= 0.0:
+        # The field is zero further than 3 r from any positive deficit (r for the
+        # dilation, 2 r for the Gaussian's 4-sigma reach), so only that window is
+        # filtered. The window keeps 2 r + 2 px of zeros at its edges, so the result is
+        # the same as filtering the whole image; deficits are often a small part of it.
+        ys, xs = np.nonzero(deficit > 0.0)
+        if len(ys) == 0:
+            return deficit.copy()
+        m = 3 * r + 2
+        y0, y1 = max(int(ys.min()) - m, 0), min(int(ys.max()) + m + 1, deficit.shape[0])
+        x0, x1 = max(int(xs.min()) - m, 0), min(int(xs.max()) + m + 1, deficit.shape[1])
+        out = deficit.copy()
+        window = deficit[y0:y1, x0:x1]
+        out[y0:y1, x0:x1] = _smooth_cover_full(window, r)
+        return out
+    return _smooth_cover_full(deficit, r)
+
+
+def _smooth_cover_full(deficit: np.ndarray, r: int) -> np.ndarray:
     grown = ndimage.grey_dilation(deficit, size=(2 * r + 1, 2 * r + 1))
     return np.maximum(ndimage.gaussian_filter(grown, r / 2.0, mode="nearest"), deficit)
 
@@ -299,6 +318,29 @@ def check_layer_order(scene: Scene, apply: bool = False, margin_ratio: float = M
             place_overlay(scene, unit, ceiling)
             unit.resolve_signature = signature
     return conflicts
+
+
+def mark_resolved(scene: Scene, margin_ratio: float = MARGIN_RATIO) -> None:
+    """Record every unit as resolved for its current inputs, without moving anything.
+
+    For state restored from a cache, which was produced by :func:`resolve_layer_order`
+    for exactly these inputs: the next pass then only redoes units that change.
+    Mirrors the signatures :func:`check_layer_order` stores.
+    """
+    units = sorted(_participating(scene), key=lambda u: u.order, reverse=True)
+    processed: list[ReconstructionUnit] = []
+    overlays = []
+    for unit in units:
+        deps = _deps(unit, processed, margin_ratio)
+        if is_overlay(scene, unit):
+            overlays.append((unit, deps))
+            continue
+        unit.resolve_signature = (_own_signature(unit, False), deps)
+        processed.append(unit)
+    for unit, above in overlays:
+        below = tuple((o.id, o.revision) for o in units
+                      if o.order < unit.order and o.mesh is not None and _bbox_overlap(unit, o))
+        unit.resolve_signature = (_own_signature(unit, True), above, below)
 
 
 def _bbox_overlap(a: ReconstructionUnit, b: ReconstructionUnit) -> bool:

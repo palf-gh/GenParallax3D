@@ -58,6 +58,7 @@ python -m pytest
 | `genparallax/rendering/` | ModernGL レンダラー（Qtに依存せず、テストでもヘッドレスで使用）と、オービットカメラ |
 | `genparallax/export/` | `glb.py`：pygltflib による書き出し（Unlit、不透明/半透明の分割、基準カメラ）。`ae.py`：After Effects 用JSON |
 | `genparallax/project.py` | `.gp3d` プロジェクトファイル（形式v2）とPSDの再読み込み。AI深度は `.gp3d_cache/` にキャッシュ |
+| `genparallax/scene_cache.py` | 読み込みで計算した凹凸・押し込み量・メッシュのキャッシュ。入力のハッシュが同じときだけ使う |
 | `genparallax/app/` | PySide6 GUI（レイヤーツリー、QOpenGLWidget のビューポート、プロパティ、日本語/英語の切り替え） |
 
 ### 約束事
@@ -172,6 +173,7 @@ python -m pytest
 | `genparallax/rendering/` | ModernGL renderer (Qt-independent, also used headlessly by tests) and the orbit camera |
 | `genparallax/export/` | `glb.py`: pygltflib writer (unlit, opaque/translucent split, reference camera). `ae.py`: After Effects JSON |
 | `genparallax/project.py` | `.gp3d` project files (format v2), PSD reload; AI depth cached in `.gp3d_cache/` |
+| `genparallax/scene_cache.py` | Cache of the reliefs, push fields and meshes computed on load; used only when the hash of the inputs matches |
 | `genparallax/app/` | PySide6 GUI: layer tree, QOpenGLWidget viewport, properties, Japanese/English UI |
 
 ### Conventions

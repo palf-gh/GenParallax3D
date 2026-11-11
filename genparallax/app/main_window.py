@@ -397,7 +397,9 @@ class MainWindow(QMainWindow):
                 return
             path = Path(chosen)
         try:
-            save_project(path, self.scene, self.doc)
+            # Cache the derived state too, unless a layer-order pass may still change it.
+            settled = not (self._order_pending or self._order_in_flight or self.task.running)
+            save_project(path, self.scene, self.doc, scene_cache=settled)
         except Exception as exc:  # noqa: BLE001
             return self._error(tr("Could not save project"), str(exc))
         self.project_path = path

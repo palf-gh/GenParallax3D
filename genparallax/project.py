@@ -17,9 +17,10 @@ import numpy as np
 from genparallax import __version__
 from genparallax.document.psd_loader import PsdDocument
 from genparallax.reconstruction import units as unitlib
-from genparallax.reconstruction.constraints import is_rigid, resolve_layer_order
+from genparallax.reconstruction.constraints import is_overlay, is_rigid, resolve_layer_order
 from genparallax.reconstruction.depth import load_depth_image
 from genparallax.scene import Composition, ExportSettings, ReconstructionMode, Scene
+from genparallax.scene_cache import load_scene_cache, save_scene_cache, scene_key
 
 FORMAT = "genparallax3d-project"
 FORMAT_VERSION = 2  # v2: adaptive meshing, edge inset, depth-map range
@@ -112,8 +113,13 @@ def scene_to_dict(scene: Scene, doc: PsdDocument, base: Path | None = None,
 
 
 def scene_from_dict(data: dict, doc: PsdDocument, base: Path | None = None,
-                    global_depth: np.ndarray | None = None) -> tuple[Scene, list[str]]:
-    """Rebuild a scene for ``doc`` from saved settings. Returns ``(scene, warnings)``."""
+                    global_depth: np.ndarray | None = None,
+                    cache_dir: Path | None = None) -> tuple[Scene, list[str]]:
+    """Rebuild a scene for ``doc`` from saved settings. Returns ``(scene, warnings)``.
+
+    With ``cache_dir`` the derived state is taken from the scene cache when it matches
+    (see :mod:`genparallax.scene_cache`), and stored there after computing it.
+    """
     resolve = _resolver(base)
     warnings: list[str] = []
     if [doc.width, doc.height] != data.get("image_size"):
@@ -192,8 +198,15 @@ def scene_from_dict(data: dict, doc: PsdDocument, base: Path | None = None,
         new_units.append(unit)
         warnings.append(f"New layer '{info.path}' added.")
 
-    unitlib.refresh_all(scene)
-    unitlib.conform_overlays(scene)
+    key = None
+    if cache_dir is not None and not new_units:
+        key = scene_key(scene)
+        cached = load_scene_cache(cache_dir, scene, key)
+        if cached is not None:
+            return scene, warnings + cached
+    # Overlays are laid once, by the layer-order pass below (laying them is the slowest
+    # step of loading a large project), not here as well.
+    unitlib.refresh_all(scene, place_overlays=False)
     for unit in new_units:
         if unit.depth_stats is not None:  # take the new layer's depth from the depth map
             unit.base_depth, unit.depth_strength = unit.depth_stats
@@ -205,10 +218,20 @@ def scene_from_dict(data: dict, doc: PsdDocument, base: Path | None = None,
         unit = scene.unit_by_id(c.lower_id)
         if unit.id not in known or is_rigid(unit):
             warnings.append(f"'{unit.name}' was moved back {c.depth_px:.1f} px to keep the PSD layer order.")
+    for unit in scene.units:  # overlays with nothing below are left to us: lay them flat
+        if unit.conform and unit.mode != ReconstructionMode.EXCLUDED and not is_overlay(scene, unit):
+            unitlib.conform_unit(scene, unit)
+    if key is not None:
+        save_scene_cache(cache_dir, scene, warnings, key)
     return scene, warnings
 
 
-def save_project(path: str | Path, scene: Scene, doc: PsdDocument) -> Path:
+def save_project(path: str | Path, scene: Scene, doc: PsdDocument, scene_cache: bool = False) -> Path:
+    """Write the project file (and the depth map) next to it.
+
+    With ``scene_cache`` the current derived state is cached for the next load as well;
+    only pass it when that state is final for the settings (no layer-order pass pending).
+    """
     path = Path(path)
     depth_file = None
     if scene.global_depth is not None:
@@ -218,6 +241,8 @@ def save_project(path: str | Path, scene: Scene, doc: PsdDocument) -> Path:
         np.save(depth_file, scene.global_depth)
     data = scene_to_dict(scene, doc, path.parent, depth_file)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    if scene_cache:
+        save_scene_cache(cache_dir_for(path), scene)
     return path
 
 
@@ -230,7 +255,7 @@ def load_project(path: str | Path) -> tuple[Scene, PsdDocument, list[str]]:
     if data.get("version", 1) > FORMAT_VERSION:
         raise ValueError(f"{path} was saved by a newer version of GenParallax3D")
     doc = PsdDocument(_resolver(path.parent)(data["psd"]))
-    scene, warnings = scene_from_dict(data, doc, path.parent)
+    scene, warnings = scene_from_dict(data, doc, path.parent, cache_dir=cache_dir_for(path))
     return scene, doc, warnings
 
 
