@@ -30,6 +30,9 @@ UNIT_DEFAULTS = {
     "mesh_density": 8,  # v1 projects used uniform 8 px grids
     "adaptive_mesh": False,
     "mesh_detail": 0.03,
+    # Projects from before simplification get it too: it keeps the look and the
+    # reference view, and only removes vertices.
+    "mesh_simplify": "standard",
     "edge_inset": 0,
     "occlusion_inset": 6,
     "visible": True,
@@ -95,6 +98,7 @@ def scene_to_dict(scene: Scene, doc: PsdDocument, base: Path | None = None,
                 "mesh_density": u.mesh_density,
                 "adaptive_mesh": u.adaptive_mesh,
                 "mesh_detail": u.mesh_detail,
+                "mesh_simplify": u.mesh_simplify,
                 "edge_inset": u.edge_inset,
                 "occlusion_inset": u.occlusion_inset,
                 "conform": u.conform,

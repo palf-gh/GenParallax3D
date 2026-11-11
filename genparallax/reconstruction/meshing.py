@@ -127,6 +127,324 @@ def build_adaptive_grid(alpha: np.ndarray, relief: np.ndarray | None, step: int,
     return {"step": step, "shape": (h, w), "xy": xy, "faces": faces, "uv": uv}
 
 
+# ------------------------------------------------------------------ simplification
+#: Depth tolerance of each simplification level, relative to the unit's depth. A depth
+#: error dZ changes the parallax of a point by the fraction dZ / Z, so a relative
+#: tolerance looks the same on near and far layers.
+SIMPLIFY_DEPTH_RATIO = {"off": None, "standard": 0.004, "strong": 0.012}
+#: Largest cell allowed across the silhouette (and across the opaque/translucent
+#: boundary), in px: the overdraw into transparent texels stays below this.
+SIMPLIFY_EDGE_PX = {"off": None, "standard": 8, "strong": 16}
+#: Texels at least this opaque can go into the opaque (alpha-mask) part of a GLB
+#: export; keep equal to ``genparallax.export.glb.OPAQUE_TEXEL``.
+OPAQUE_ALPHA = 252
+#: Largest simplified cell, as a multiple of the minimum cell size (a power of two).
+SIMPLIFY_MAX_FACTOR = 64
+
+
+def depth_bucket(depth: float) -> float:
+    """``depth`` rounded *down* to a power of sqrt(2) (the tolerance's reference depth)."""
+    d = max(float(depth), 1e-6)
+    return float(2.0 ** (np.floor(2.0 * np.log2(d) + 1e-9) / 2.0))
+
+
+def simplify_tolerance(unit: ReconstructionUnit) -> float | None:
+    """The unit's depth tolerance in px along the camera axis, or None when
+    simplification is off. Derived from the bucketed depth so that moving the unit
+    rebuilds the mesh only when the depth crosses a bucket."""
+    ratio = SIMPLIFY_DEPTH_RATIO.get(unit.mesh_simplify, SIMPLIFY_DEPTH_RATIO["standard"])
+    return None if ratio is None else ratio * depth_bucket(unit.effective_base_depth)
+
+
+def edge_level(step: int, edge_px: int | None) -> int:
+    """Largest quadtree level whose cells (``step << k`` px) fit in ``edge_px``."""
+    step = max(1, int(step))
+    k = 0
+    while edge_px is not None and step << (k + 1) <= edge_px:
+        k += 1
+    return k
+
+
+def simplify_edge_level(unit: ReconstructionUnit) -> int:
+    return edge_level(unit.mesh_density, SIMPLIFY_EDGE_PX.get(unit.mesh_simplify, SIMPLIFY_EDGE_PX["standard"]))
+
+
+def strength_bucket(strength: float) -> float:
+    """``|strength|`` rounded *up* to a power of sqrt(2).
+
+    The topology is built for this strength, so it stays valid (the error can only
+    shrink) while the relief strength is dragged below it, and the mesh is rebuilt
+    only when the strength crosses a bucket.
+    """
+    s = abs(float(strength))
+    if s == 0.0 or not np.isfinite(s):
+        return 0.0
+    return float(2.0 ** (np.ceil(2.0 * np.log2(s) - 1e-9) / 2.0))
+
+
+#: Sample points of a cell, in the order used by the weight tables: four corners,
+#: centre and edge midpoints (left, bottom, right, top), in units of the cell size.
+_CELL_POINTS = np.array([[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5],
+                         [0, 0.5], [0.5, 1], [1, 0.5], [0.5, 0]], dtype=np.float64)
+TL, TR, BL, BR, C, ML, MB, MR, MT = range(9)
+#: The triangulations :func:`_triangulate` can give a leaf cell of level >= 1: two
+#: triangles, or a fan from the centre with any subset of the edge midpoints. Every fan
+#: triangle is one of the 4-fan's or one of the 8-fan's, so bounding those three bounds
+#: every case.
+_CELL_TRIANGULATIONS = (
+    ((TL, BL, TR), (TR, BL, BR)),
+    ((C, TL, BL), (C, BL, BR), (C, BR, TR), (C, TR, TL)),
+    ((C, TL, ML), (C, ML, BL), (C, BL, MB), (C, MB, BR), (C, BR, MR), (C, MR, TR), (C, TR, MT), (C, MT, TL)),
+)
+
+
+def _weight_tables(points: np.ndarray, width: int, height: int) -> list[np.ndarray]:
+    """For each cell triangulation, a ``(9, height * width)`` matrix mapping the nine
+    sample values to the piecewise-linear interpolant at the pixel centres.
+
+    ``points`` are the sample positions in pixels relative to the cell's top-left.
+    """
+    px, py = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
+    px, py = px.ravel(), py.ravel()
+    tables = []
+    for triangles in _CELL_TRIANGULATIONS:
+        table = np.zeros((9, px.size), dtype=np.float32)
+        done = np.zeros(px.size, dtype=bool)
+        for a, b, c in triangles:
+            pa, pb, pc = points[a], points[b], points[c]
+            v0, v1 = pb - pa, pc - pa
+            den = v0[0] * v1[1] - v1[0] * v0[1]
+            if abs(den) < 1e-12:  # degenerate after clamping to the texture
+                continue
+            dx, dy = px - pa[0], py - pa[1]
+            b1 = (dx * v1[1] - v1[0] * dy) / den
+            b2 = (v0[0] * dy - dx * v0[1]) / den
+            inside = ~done & (b1 >= -1e-9) & (b2 >= -1e-9) & (1.0 - b1 - b2 >= -1e-9)
+            table[a, inside] += (1.0 - b1 - b2)[inside]
+            table[b, inside] += b1[inside]
+            table[c, inside] += b2[inside]
+            done |= inside
+        tables.append(table)
+    return tables
+
+
+class InterpolationError:
+    """Lazily evaluated interpolation error of a field, per quadtree cell.
+
+    ``get(k, cy, cx)`` returns, for cells of ``step << k`` px, the largest
+    ``|field - L|`` over the cell's pixel centres, where ``L`` is any of the
+    triangulations the cell can get (see ``_CELL_TRIANGULATIONS``) through the field
+    sampled at the cell's corners, centre and edge midpoints, exactly as the mesh
+    vertices sample it. Cells crossing the texture edge are evaluated on their part
+    inside the texture with every point clamped to it, which is how they are meshed.
+    Values are cached: the relief's error is reused while only the push field changes.
+    """
+
+    def __init__(self, field: np.ndarray, step: int, levels: int):
+        self.field = np.asarray(field, dtype=np.float32)
+        self.step, self.levels = step, levels
+        h, w = field.shape
+        root = step << levels
+        self.gh, self.gw = -(-h // root) * root, -(-w // root) * root
+        fp = np.empty((self.gh, self.gw), dtype=np.float32)
+        fp[:h, :w] = self.field
+        fp[:h, w:] = fp[:h, w - 1 : w]
+        fp[h:, :] = fp[h - 1 : h, :]
+        self.padded = fp
+        lo, hi = [_block(fp, step, np.min)], [_block(fp, step, np.max)]
+        for k in range(1, levels + 1):
+            lo.append(_block(lo[0], 1 << k, np.min))
+            hi.append(_block(hi[0], 1 << k, np.max))
+        self.lo, self.hi = lo, hi  # per level: min and max of the field over each cell
+        self.cache = [np.full((self.gh // (step << k), self.gw // (step << k)), np.nan, dtype=np.float32)
+                      for k in range(levels + 1)]
+        self.tables: dict = {}
+
+    def get(self, k: int, cy: np.ndarray, cx: np.ndarray) -> np.ndarray:
+        cache = self.cache[k]
+        missing = np.isnan(cache[cy, cx])
+        if missing.any():
+            self._compute(k, cy[missing], cx[missing])
+        return cache[cy, cx]
+
+    def _compute(self, k: int, cy: np.ndarray, cx: np.ndarray) -> None:
+        h, w = self.field.shape
+        s = self.step << k
+        x0, y0 = cx * s, cy * s
+        clamped = (x0 + s > w) | (y0 + s > h)
+        sq = ~clamped
+        if sq.any():
+            if s not in self.tables:
+                self.tables[s] = _weight_tables(_CELL_POINTS * s, s, s)
+            pts = (np.stack([x0[sq], y0[sq]], 1)[:, None, :] + _CELL_POINTS[None] * s).reshape(-1, 2)
+            values = sample_relief(self.field, pts).reshape(-1, 9).astype(np.float32)
+            blocks = self.padded.reshape(self.gh // s, s, self.gw // s, s)
+            err = np.zeros(int(sq.sum()), dtype=np.float32)
+            for start in range(0, len(err), max(1, (1 << 22) // (s * s))):  # bounded memory
+                sl = slice(start, start + max(1, (1 << 22) // (s * s)))
+                pix = blocks[cy[sq][sl], :, cx[sq][sl], :].reshape(-1, s * s)
+                for table in self.tables[s]:
+                    np.maximum(err[sl], np.abs(pix - values[sl] @ table).max(axis=1), out=err[sl])
+            self.cache[k][cy[sq], cx[sq]] = err
+        for y, x in zip(y0[clamped], x0[clamped]):
+            x1, y1 = min(x + s, w), min(y + s, h)
+            pts = np.minimum(np.array([x, y], dtype=np.float64) + _CELL_POINTS * s, [w, h])
+            values = sample_relief(self.field, pts).astype(np.float32)
+            pix = self.field[y:y1, x:x1].ravel()
+            err = 0.0
+            local = pts - [x, y]
+            key = (x1 - x, y1 - y, local.tobytes())  # the same for a whole edge row/column
+            if key not in self.tables:
+                self.tables[key] = _weight_tables(local, x1 - x, y1 - y)
+            for table in self.tables[key]:
+                err = max(err, float(np.abs(pix - values @ table).max()))
+            self.cache[k][y // s, x // s] = err
+
+
+def simplified_levels(alpha: np.ndarray, step: int, tolerance: float, relief_error: InterpolationError | None,
+                      strength: float, push_error: InterpolationError | None, levels: int,
+                      depth: float | None = None, edge: int = 0) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Leaf level of every minimum cell for the simplified mesh (-1 = no geometry).
+
+    A cell is kept whole when it lies entirely inside the silhouette and its triangles
+    stay within ``tolerance`` px of the depth ``Z = B + S * R + P`` at every pixel
+    centre, for every ``S`` in ``(strength / sqrt 2, strength]`` and ``B >= depth``:
+
+    * ``strength * err_R + err_P`` bounds the linear-interpolation error;
+    * ``dZ**2 / (4 Z_min)`` bounds the extra error of interpolating ``1/Z``
+      (perspective-correct, as the GPU does) instead of ``Z`` over the cell.
+
+    Cells straddling the silhouette are split down to level ``edge``, so they
+    cover every visible texel with less than one edge cell of overdraw. So are cells
+    mixing texels the GLB export can draw as opaque with ones it cannot, so that large
+    cells do not move opaque areas into the translucent (blended) part. Evaluated
+    breadth-first, so the relief error is only computed for candidate cells. The result
+    is 2:1 balanced. Returns ``(level, any_vis)``.
+    """
+    h, w = alpha.shape
+    root = step << levels
+    nby, nbx = -(-h // root), -(-w // root)
+    gh, gw = nby << levels, nbx << levels
+    vis = np.zeros((gh * step, gw * step), dtype=bool)
+    vis[:h, :w] = alpha >= ALPHA_THRESHOLD
+    # Outside the texture counts as "inside" for the all-visible test: cells crossing
+    # the texture edge are clamped to it, so they need not be split there.
+    full = np.ones_like(vis)
+    full[:h, :w] = vis[:h, :w]
+    # glb.opaque_triangles looks one texel around a triangle's bounding box.
+    clear = np.zeros_like(vis)
+    clear[:h, :w] = ndimage.binary_dilation(alpha < OPAQUE_ALPHA, np.ones((3, 3), bool))
+    solid = np.zeros_like(vis)
+    solid[:h, :w] = ~clear[:h, :w]
+    any_vis, all_vis = [_block(vis, step, np.any)], [_block(full, step, np.all)]
+    any_clear, any_solid = [_block(clear, step, np.any)], [_block(solid, step, np.any)]
+    for k in range(1, levels + 1):
+        any_vis.append(_block(any_vis[0], 1 << k, np.any))
+        all_vis.append(_block(all_vis[0], 1 << k, np.all))
+        any_clear.append(_block(any_clear[0], 1 << k, np.any))
+        any_solid.append(_block(any_solid[0], 1 << k, np.any))
+    use_relief = relief_error is not None and strength > 0.0
+
+    def error(k: int, ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
+        e = np.zeros(len(ys), dtype=np.float64)
+        span = np.zeros(len(ys), dtype=np.float64)  # depth range over the cell
+        low = np.zeros(len(ys), dtype=np.float64)  # lowest relief + push offset
+        if use_relief:
+            e += strength * relief_error.get(k, ys, xs)
+            rlo = relief_error.lo[k][ys, xs].astype(np.float64)
+            span += strength * (relief_error.hi[k][ys, xs] - rlo)
+            low += np.where(rlo < 0, strength, strength / np.sqrt(2.0)) * rlo
+        if push_error is not None:
+            e += push_error.get(k, ys, xs)
+            span += push_error.hi[k][ys, xs] - push_error.lo[k][ys, xs]
+            low += push_error.lo[k][ys, xs]
+        if depth is not None:
+            z_min = depth + low
+            e += np.where(z_min > 0.05 * depth, span ** 2 / (4.0 * np.maximum(z_min, 1e-9)), np.inf)
+        return e
+
+    level = np.full((gh, gw), -1, dtype=np.int16)
+    cy, cx = (a.ravel() for a in np.mgrid[0:nby, 0:nbx])
+    for k in range(levels, -1, -1):
+        keep = any_vis[k][cy, cx]
+        cy, cx = cy[keep], cx[keep]
+        split = np.zeros(len(cy), dtype=bool)
+        if k > 0:
+            mixed = ~all_vis[k][cy, cx] | (any_clear[k][cy, cx] & any_solid[k][cy, cx])
+            split = mixed & (k > edge)
+            check = np.nonzero(~split)[0]
+            split[check] = error(k, cy[check], cx[check]) > tolerance
+        leaf = np.zeros(any_vis[k].shape, dtype=bool)
+        leaf[cy[~split], cx[~split]] = True
+        size = 1 << k
+        level[np.repeat(np.repeat(leaf, size, 0), size, 1)] = k
+        cy = (2 * cy[split, None] + np.array([0, 0, 1, 1])).ravel()
+        cx = (2 * cx[split, None] + np.array([0, 1, 0, 1])).ravel()
+
+    # Balancing splits some cells that passed the test; their children have different
+    # triangles, so check those too and repeat until nothing changes.
+    for _ in range(4 * levels + 4):
+        _balance(level, any_vis, levels)
+        changed = False
+        for k in range(1, levels + 1):
+            size = 1 << k
+            ys, xs = np.nonzero(_block(level == k, size, np.all))
+            if len(ys) == 0:
+                continue
+            over = error(k, ys, xs) > tolerance
+            for y, x in zip(ys[over], xs[over]):
+                changed = True
+                for dy in (0, 1):
+                    for dx in (0, 1):
+                        sy, sx, half = 2 * y + dy, 2 * x + dx, size // 2
+                        child = k - 1 if any_vis[k - 1][sy, sx] else -1
+                        level[sy * half : (sy + 1) * half, sx * half : (sx + 1) * half] = child
+        if not changed:
+            break
+    return level, any_vis
+
+
+def build_simplified_grid(alpha: np.ndarray, step: int, tolerance: float, relief: np.ndarray | None = None,
+                          strength: float = 0.0, push: np.ndarray | None = None,
+                          depth: float | None = None, max_factor: int = SIMPLIFY_MAX_FACTOR,
+                          relief_error: InterpolationError | None = None,
+                          push_error: InterpolationError | None = None, edge: int = 0) -> dict:
+    """Simplified mesh: large triangles wherever the surface is close to planar.
+
+    Approach: an error-bounded quadtree remesh rather than edge-collapse decimation.
+    Cells of ``step * 2**k`` px (up to ``max_factor``) are kept whole while their
+    triangles reproduce the per-pixel depth relief within ``tolerance`` px, measured
+    exactly at every pixel centre (see :func:`simplified_levels`; ``depth`` is the
+    lowest base depth the mesh is used at, for the perspective term). The test is the linear-interpolation error, not the
+    depth range, so smooth slopes become large cells as well as flat areas.
+    Compared with edge collapse this
+
+    * keeps every vertex on an integer pixel corner, hence on its reference ray and
+      with an exact UV, so the reference view still reproduces the PSD;
+    * covers every visible texel by construction: silhouette cells are split down to
+      level ``edge`` (a few px), so the overdraw into transparent texels stays slight;
+    * is crack-free (2:1 balanced, edge midpoints instead of T-junctions);
+    * is vectorised NumPy with no per-collapse priority queue in Python, so it is fast
+      enough to rebuild while the layer-order pass updates the push field.
+
+    The relief error depends only on the relief, so it is cached (``relief_error``)
+    and reused when only the push field ``P`` changes; ``P`` gets its own error.
+    """
+    levels = int(round(np.log2(max(1, max_factor))))
+    step = max(1, int(step))
+    h, w = alpha.shape
+    if relief is not None and strength > 0.0 and relief_error is None:
+        relief_error = InterpolationError(relief, step, levels)
+    if push is not None and push_error is None:
+        push_error = InterpolationError(push, step, levels)
+    level, _ = simplified_levels(alpha, step, tolerance, relief_error, strength, push_error, levels, depth,
+                                 edge)
+    xy, faces = _triangulate(level, levels, step, w, h)
+    uv = (xy / np.array([w, h], dtype=np.float64)).astype(np.float32)
+    return {"step": step, "shape": (h, w), "xy": xy, "faces": faces, "uv": uv, "level": level,
+            "relief_error": relief_error, "push": push, "levels": levels, "depth": depth, "edge": edge}
+
+
 def _balance(level: np.ndarray, any_vis: list[np.ndarray], levels: int) -> None:
     """Split leaves until no 4-neighbour leaf is more than one level finer."""
     empty = np.int16(levels + 10)
@@ -362,10 +680,69 @@ def mesh_depth_map(unit: ReconstructionUnit, camera: Camera) -> np.ndarray | Non
     return depth
 
 
+def _uses_relief(unit: ReconstructionUnit) -> bool:
+    return unit.mode in (ReconstructionMode.DEPTH_SURFACE, ReconstructionMode.SMOOTHED_SURFACE,
+                         ReconstructionMode.MANUAL_DEPTH)
+
+
+def _simplify_inputs(unit: ReconstructionUnit) -> tuple[np.ndarray | None, float, np.ndarray | None]:
+    """(relief, bucketed strength, push) as :func:`vertex_depths` uses them. A negative
+    strength is folded into the relief (``S * R == |S| * -R``), so the strength is >= 0."""
+    if not _uses_relief(unit):
+        return None, 0.0, None
+    if unit.relief is None or unit.depth_strength == 0.0:
+        return None, 0.0, unit.depth_push
+    relief = unit.relief if unit.depth_strength > 0 else -unit.relief
+    return relief, strength_bucket(unit.depth_strength), unit.depth_push
+
+
+def _relief_key(unit: ReconstructionUnit) -> tuple:
+    return (unit.relief_revision, unit.depth_strength > 0, max(1, int(unit.mesh_density)))
+
+
 def grid_key(unit: ReconstructionUnit) -> tuple:
     h, w = unit.texture.shape[:2]
-    return (max(1, int(unit.mesh_density)), (h, w), bool(unit.adaptive_mesh), float(unit.mesh_detail),
+    step = max(1, int(unit.mesh_density))
+    tolerance = simplify_tolerance(unit)
+    if tolerance is not None:  # the push field is checked separately (see update_unit_mesh)
+        relief, strength, _ = _simplify_inputs(unit)
+        return (step, (h, w), "simplified", tolerance, simplify_edge_level(unit),
+                depth_bucket(unit.effective_base_depth), strength, _relief_key(unit) if relief is not None else None)
+    return (step, (h, w), bool(unit.adaptive_mesh), float(unit.mesh_detail),
             unit.relief_revision if unit.adaptive_mesh else None)
+
+
+def _build_grid_for(unit: ReconstructionUnit, old: dict | None, push_error=None) -> dict:
+    tolerance = simplify_tolerance(unit)
+    if tolerance is None:
+        if unit.adaptive_mesh:
+            return build_adaptive_grid(unit.alpha, unit.relief, unit.mesh_density, unit.mesh_detail)
+        return build_grid(unit.alpha, unit.mesh_density)
+    relief, strength, push = _simplify_inputs(unit)
+    relief_error = None
+    if relief is not None:  # reuse the relief error while only the push field changed
+        if old is not None and old.get("relief_key") == _relief_key(unit):
+            relief_error = old.get("relief_error")
+    grid = build_simplified_grid(unit.alpha, unit.mesh_density, tolerance, relief, strength, push,
+                                 depth_bucket(unit.effective_base_depth), relief_error=relief_error,
+                                 push_error=push_error, edge=simplify_edge_level(unit))
+    if relief is not None:
+        grid["relief_key"] = _relief_key(unit)
+    return grid
+
+
+def _push_still_fits(unit: ReconstructionUnit, grid: dict) -> tuple[bool, InterpolationError | None]:
+    """Whether a simplified grid built for an older push field has exactly the topology
+    the current push field needs (so the coverage cache stays valid), and the push
+    field's interpolation error for a rebuild."""
+    relief, strength, push = _simplify_inputs(unit)
+    if grid.get("push") is push:
+        return True, None
+    push_error = InterpolationError(push, grid["step"], grid["levels"]) if push is not None else None
+    level, _ = simplified_levels(unit.alpha, grid["step"], simplify_tolerance(unit),
+                                 grid.get("relief_error") if relief is not None else None,
+                                 strength, push_error, grid["levels"], grid["depth"], grid["edge"])
+    return bool(np.array_equal(level, grid["level"])), push_error
 
 
 def update_unit_mesh(unit: ReconstructionUnit, camera: Camera, force_grid: bool = False) -> Mesh | None:
@@ -376,11 +753,17 @@ def update_unit_mesh(unit: ReconstructionUnit, camera: Camera, force_grid: bool 
         return None
     key = grid_key(unit)
     grid = unit.grid_cache
-    if force_grid or grid is None or grid.get("key") != key:
-        if unit.adaptive_mesh:
-            grid = build_adaptive_grid(unit.alpha, unit.relief, unit.mesh_density, unit.mesh_detail)
+    rebuild = force_grid or grid is None or grid.get("key") != key
+    push_error = None
+    if not rebuild and "level" in grid and grid.get("push") is not unit.depth_push:
+        fits, push_error = _push_still_fits(unit, grid)
+        if fits:
+            grid = dict(grid, push=unit.depth_push)  # a copy: snapshots may share the old dict
+            unit.grid_cache = grid
         else:
-            grid = build_grid(unit.alpha, unit.mesh_density)
+            rebuild = True
+    if rebuild:
+        grid = _build_grid_for(unit, grid, push_error)
         grid["key"] = key
         unit.grid_cache = grid
 

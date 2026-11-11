@@ -136,8 +136,8 @@ def split_unit(scene: Scene, doc: PsdDocument, unit: ReconstructionUnit) -> list
 
 def _copy_params(src: ReconstructionUnit, dst: ReconstructionUnit) -> None:
     for attr in ("base_depth", "depth_strength", "depth_offset", "depth_smoothing", "mesh_density", "mode",
-                 "custom_depth_path", "visible", "adaptive_mesh", "mesh_detail", "edge_inset", "conform",
-                 "occlusion_inset"):
+                 "custom_depth_path", "visible", "adaptive_mesh", "mesh_detail", "mesh_simplify", "edge_inset",
+                 "conform", "occlusion_inset"):
         setattr(dst, attr, getattr(src, attr))
 
 

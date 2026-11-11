@@ -199,6 +199,14 @@ JA: dict[str, str] = {
     "Large cells where the surface is flat, fine cells at silhouettes and depth changes":
         "平らな所は大きなセル、輪郭や深度の変化がある所は細かいセルにします",
     "Mesh Detail": "メッシュ詳細度",
+    "Mesh Simplification": "メッシュの簡略化",
+    "Off": "オフ",
+    "Standard": "標準",
+    "Strong": "強",
+    "Fewer vertices: large triangles where the surface is flat or smooth. "
+    "The outline and the camera view stay the same; Strong allows more depth error":
+        "頂点を減らします。平らな所やなめらかな所を大きな三角形にまとめます。"
+        "輪郭とカメラからの見た目は変わりません。「強」は奥行きの誤差を大きめに許します",
     "Adaptive tolerance in relief units: smaller = more triangles": "適応メッシュの許容誤差（凹凸の単位）。小さいほど三角形が増えます",
     "Custom Depth Map": "個別の深度マップ",
     "Z Position (px)": "Z位置 (px)",

@@ -30,9 +30,9 @@ def _over_white(rgba):
     return rgba[..., :3].astype(np.float64) * a + 255.0 * (1 - a)
 
 
-@pytest.mark.parametrize("adaptive", [False, True])
+@pytest.mark.parametrize("adaptive,simplify", [(False, "off"), (True, "off"), (True, "standard"), (True, "strong")])
 @pytest.mark.parametrize("strength_scale", [0.0, 1.0, 3.0])  # 6x drives Z through the near plane
-def test_reference_render_matches_composite(ctx, psd_path, depth_path, strength_scale, adaptive):
+def test_reference_render_matches_composite(ctx, psd_path, depth_path, strength_scale, adaptive, simplify):
     """After resolving the layer order the reference view reproduces the PSD, even with
     strong relief and a depth map that contradicts the stacking order (the radial map
     puts the background centre in front of the foreground layers)."""
@@ -44,6 +44,7 @@ def test_reference_render_matches_composite(ctx, psd_path, depth_path, strength_
     for u in scene.units:
         u.mesh_density = 4
         u.adaptive_mesh = adaptive
+        u.mesh_simplify = simplify
     unitlib.set_global_depth(scene, load_depth_image(depth_path, (W, H)), "test")
     for u in scene.units:
         u.depth_strength *= strength_scale

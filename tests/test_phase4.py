@@ -10,7 +10,7 @@ from genparallax.document.psd_loader import PsdDocument
 from genparallax.reconstruction import units as unitlib
 from genparallax.reconstruction.constraints import check_layer_order, resolve_layer_order
 from genparallax.reconstruction.depth import inpaint, load_depth_image
-from genparallax.reconstruction.meshing import build_adaptive_grid, build_grid, update_unit_mesh
+from genparallax.reconstruction.meshing import build_adaptive_grid, build_grid, strength_bucket, update_unit_mesh
 from genparallax.scene import ReconstructionMode
 
 from conftest import H, W
@@ -187,7 +187,19 @@ def test_grid_cache_follows_relief(doc, depth_path):
     unitlib.refresh_unit(scene, bg)
     assert bg.grid_cache is not before
     after = bg.grid_cache
-    bg.depth_strength *= 2  # strength edits keep the topology
+    # A simplified mesh is built for the strength rounded up to a power of sqrt(2), so
+    # strength edits inside that bucket keep the topology …
+    bg.depth_strength = strength_bucket(bg.depth_strength) * 0.9
+    update_unit_mesh(bg, scene.reference_camera)
+    after = bg.grid_cache
+    bg.depth_strength /= 0.9
+    update_unit_mesh(bg, scene.reference_camera)
+    assert bg.grid_cache is after
+    # … and without simplification any strength edit does.
+    bg.mesh_simplify = "off"
+    update_unit_mesh(bg, scene.reference_camera)
+    after = bg.grid_cache
+    bg.depth_strength *= 2
     update_unit_mesh(bg, scene.reference_camera)
     assert bg.grid_cache is after
 

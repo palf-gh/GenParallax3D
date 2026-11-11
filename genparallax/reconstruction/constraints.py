@@ -25,7 +25,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
-from genparallax.reconstruction.meshing import ADAPTIVE_MAX_FACTOR, mesh_depth_map, update_unit_mesh
+from genparallax.reconstruction.meshing import (ADAPTIVE_MAX_FACTOR, SIMPLIFY_MAX_FACTOR, mesh_depth_map,
+                                                 simplify_tolerance, update_unit_mesh)
 from genparallax.scene import ReconstructionMode, ReconstructionUnit, Scene
 from genparallax.scene import next_revision
 
@@ -95,6 +96,9 @@ def interpolation_bound(unit: ReconstructionUnit) -> np.ndarray | float:
 
     step = max(1, int(unit.mesh_density))
     fine = local_range(step)
+    tolerance = simplify_tolerance(unit)
+    if tolerance is not None:  # simplified cells stay within the tolerance of S * R + P
+        return np.minimum(local_range(step * SIMPLIFY_MAX_FACTOR), np.maximum(fine, tolerance))
     if not unit.adaptive_mesh:
         return fine
     # Large adaptive cells only exist where R varies less than ``mesh_detail``;
@@ -310,7 +314,7 @@ def _deps(unit: ReconstructionUnit, above: list[ReconstructionUnit], margin_rati
 
 
 def _own_signature(unit: ReconstructionUnit, overlay: bool) -> tuple:
-    common = (unit.mode, unit.conform, unit.mesh_density, unit.adaptive_mesh, unit.mesh_detail,
+    common = (unit.mode, unit.conform, unit.mesh_density, unit.adaptive_mesh, unit.mesh_detail, unit.mesh_simplify,
               id(unit.texture), unit.offset, unit.depth_offset)
     if overlay:  # B, S and R are outputs of the placement, not inputs
         return common + (unit.depth_smoothing, unit.edge_inset)
