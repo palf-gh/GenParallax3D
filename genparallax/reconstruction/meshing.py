@@ -136,7 +136,7 @@ SIMPLIFY_DEPTH_RATIO = {"off": None, "standard": 0.004, "strong": 0.012}
 #: interpolated perspective-correctly (by the GPU and in After Effects), so inside a
 #: triangle whose corners lie at different depths a texel lands up to about
 #: ``size * dZ / (4 Z)`` px from its screen position, although every vertex is exact.
-SIMPLIFY_UV_PX = {"off": None, "standard": 0.1, "strong": 0.2}
+SIMPLIFY_UV_PX = {"off": None, "standard": 0.1, "strong": 0.1}
 #: Largest cell allowed across the silhouette (and across the opaque/translucent
 #: boundary), in px: the overdraw into transparent texels stays below this.
 SIMPLIFY_EDGE_PX = {"off": None, "standard": 8, "strong": 16}
@@ -256,13 +256,12 @@ class InterpolationError:
         fp[:h, w:] = fp[:h, w - 1 : w]
         fp[h:, :] = fp[h - 1 : h, :]
         self.padded = fp
-        lo, hi = [_block(fp, step, np.min)], [_block(fp, step, np.max)]
-        for k in range(1, levels + 1):
-            lo.append(_block(lo[0], 1 << k, np.min))
-            hi.append(_block(hi[0], 1 << k, np.max))
-        self.lo, self.hi = lo, hi  # per level: min and max of the field over each cell
         self.cache = [np.full((self.gh // (step << k), self.gw // (step << k)), np.nan, dtype=np.float32)
                       for k in range(levels + 1)]
+        #: Per level, min and max of the field at the cell's nine sample points (the
+        #: vertex values), filled together with ``cache`` by :meth:`get`.
+        self.lo = [np.full_like(c, np.nan) for c in self.cache]
+        self.hi = [np.full_like(c, np.nan) for c in self.cache]
         self.tables: dict = {}
 
     def get(self, k: int, cy: np.ndarray, cx: np.ndarray) -> np.ndarray:
@@ -283,6 +282,8 @@ class InterpolationError:
                 self.tables[s] = _weight_tables(_CELL_POINTS * s, s, s)
             pts = (np.stack([x0[sq], y0[sq]], 1)[:, None, :] + _CELL_POINTS[None] * s).reshape(-1, 2)
             values = sample_relief(self.field, pts).reshape(-1, 9).astype(np.float32)
+            self.lo[k][cy[sq], cx[sq]] = values.min(axis=1)
+            self.hi[k][cy[sq], cx[sq]] = values.max(axis=1)
             blocks = self.padded.reshape(self.gh // s, s, self.gw // s, s)
             err = np.zeros(int(sq.sum()), dtype=np.float32)
             for start in range(0, len(err), max(1, (1 << 22) // (s * s))):  # bounded memory
@@ -295,6 +296,8 @@ class InterpolationError:
             x1, y1 = min(x + s, w), min(y + s, h)
             pts = np.minimum(np.array([x, y], dtype=np.float64) + _CELL_POINTS * s, [w, h])
             values = sample_relief(self.field, pts).astype(np.float32)
+            self.lo[k][y // s, x // s] = values.min()
+            self.hi[k][y // s, x // s] = values.max()
             pix = self.field[y:y1, x:x1].ravel()
             err = 0.0
             local = pts - [x, y]
@@ -355,8 +358,10 @@ def simplified_levels(alpha: np.ndarray, step: int, tolerance: float, relief_err
 
     def error(k: int, ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
         e = np.zeros(len(ys), dtype=np.float64)
-        span = np.zeros(len(ys), dtype=np.float64)  # depth range over the cell
-        low = np.zeros(len(ys), dtype=np.float64)  # lowest relief + push offset
+        # Depth range and lowest depth offset over the cell's vertices: the 1/Z term and
+        # the UV shift depend only on the vertex depths.
+        span = np.zeros(len(ys), dtype=np.float64)
+        low = np.zeros(len(ys), dtype=np.float64)
         if use_relief:
             e += strength * relief_error.get(k, ys, xs)
             rlo = relief_error.lo[k][ys, xs].astype(np.float64)
